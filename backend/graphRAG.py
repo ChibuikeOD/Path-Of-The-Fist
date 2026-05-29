@@ -537,8 +537,7 @@ def _call_deepseek_chat_completion(system_message: str, user_message: str, start
             elapsed = time.time() - start_time
             if elapsed >= 30.0:
                 print("DeepSeek chat completion: 30s budget exceeded before request.")
-                fallback_text, _, _ = _demo_answer(question, tournament_data, system_message)
-                return f"[Answer (Demo Fallback)]\n{fallback_text}"
+                return "Error: Chat generation timed out after 30 seconds."
 
             budget = 30.0 - elapsed
             request_timeout = min(15.0, budget)
@@ -588,9 +587,7 @@ def _call_deepseek_chat_completion(system_message: str, user_message: str, start
                             reasoning = str(message[attr]).strip()
                             break
                     if reasoning:
-                        # Append demo fallback to keep answers complete if content was empty due to timeout
-                        demo_text, _, _ = _demo_answer(question, tournament_data, system_message)
-                        text = f"[Thinking Process]\n{reasoning}\n\n[Answer (Demo Fallback)]\n{demo_text}"
+                        text = f"[Thinking Process]\n{reasoning}\n\n[Inference stopped: 30-second time budget reached]"
                     else:
                         print("  [ERROR] DeepSeek response did not include message content. Skipping retries.")
                         raise NonRetryableError("DeepSeek response did not include message content")
@@ -638,8 +635,7 @@ def _call_deepseek_chat_completion_stream(system_message: str, user_message: str
             elapsed = time.time() - start_time
             if elapsed >= 30.0:
                 print("DeepSeek streaming: 30s budget exceeded before request.")
-                fallback_text, _, _ = _demo_answer(question, tournament_data, system_message)
-                yield f"[Answer (Demo Fallback)]\n{fallback_text}"
+                yield "Error: Chat generation timed out after 30 seconds."
                 return
 
             budget = 30.0 - elapsed
@@ -675,8 +671,7 @@ def _call_deepseek_chat_completion_stream(system_message: str, user_message: str
                     if time.time() - start_time > 30.0:
                         print("30s budget exceeded during stream loop.")
                         if not has_generated_any_content:
-                            demo_text, _, _ = _demo_answer(question, tournament_data, system_message)
-                            yield f"\n\n[Answer (Demo Fallback)]\n{demo_text}"
+                            yield "\n\n[Inference stopped: 30-second time budget reached before generating answer content]"
                         else:
                             yield "\n\n[Answer cut off due to 30s timeout]"
                         return
@@ -768,8 +763,7 @@ def _generate_hf_answer(question: str, tournament_data: str, system_message: str
         elapsed = time.time() - start_time
         if elapsed >= 30.0:
             print("HF inference: 30s budget exceeded before request.")
-            fallback_text, _, _ = _demo_answer(question, tournament_data, system_message)
-            return fallback_text
+            return "Error: Chat generation timed out after 30 seconds."
 
         budget = 30.0 - elapsed
         request_timeout = min(15.0, budget)
@@ -806,10 +800,9 @@ def _generate_hf_answer(question: str, tournament_data: str, system_message: str
                 continue
             
             # For non-503 HTTP errors (like 400 paused, 404, or after max retries),
-            # fall back immediately to demo responses to prevent API crash.
-            print(f"HF HTTP error ({status}); falling back to demo commentator responses.")
-            fallback_text, _, _ = _demo_answer(question, tournament_data, system_message)
-            return fallback_text
+            # return the error immediately.
+            print(f"HF HTTP error ({status}); returning error.")
+            return f"Error: Hugging Face API returned status {status}."
         except Exception as exc:
             if attempt < MAX_RETRIES:
                 wait = min(2 * attempt, 10)
@@ -817,9 +810,8 @@ def _generate_hf_answer(question: str, tournament_data: str, system_message: str
                 time.sleep(wait)
                 continue
             if attempt == MAX_RETRIES:
-                print(f"HF inference failed ({exc}); using demo commentator responses.")
-                fallback_text, _, _ = _demo_answer(question, tournament_data, system_message)
-                return fallback_text
+                print(f"HF inference failed ({exc}); returning error.")
+                return f"Error: Hugging Face inference failed: {exc}"
             raise
 
     elapsed = time.time() - t1
@@ -865,16 +857,16 @@ def generate_answer(question):
             )
             return text, tournament_data, system_message
         except Exception as exc:
-            print(f"DeepSeek inference failed ({exc}); falling back to demo commentator responses.")
+            print(f"DeepSeek inference failed ({exc}); returning error.")
             _agent_log("deepseek_chat_failed", {"error": str(exc)}, "C")
             if provider != "auto":
-                return _demo_answer(question, tournament_data, system_message)
+                return f"Error: DeepSeek inference failed: {exc}", tournament_data, system_message
 
     if use_hf:
         return _generate_hf_answer(question, tournament_data, system_message, start_time), tournament_data, system_message
 
-    print("Chat provider not configured for Hugging Face/DeepSeek; using demo commentator responses.")
-    return _demo_answer(question, tournament_data, system_message)
+    print("Chat provider not configured for Hugging Face/DeepSeek.")
+    return "Error: No chat provider configured (DEEPSEEK_API_KEY and HF_TOKEN are missing).", tournament_data, system_message
 
 
 def generate_answer_stream(question):
@@ -929,9 +921,8 @@ def generate_answer_stream(question):
             if provider == "auto" and use_hf:
                 print(f"DeepSeek streaming failed ({exc}); falling back to Hugging Face.")
             else:
-                print(f"DeepSeek streaming failed ({exc}); falling back to demo commentator responses.")
-                fallback_text, _, _ = _demo_answer(question, tournament_data, system_message)
-                yield _json_line("delta", text=fallback_text)
+                print(f"DeepSeek streaming failed ({exc}); returning error.")
+                yield _json_line("delta", text=f"Error: DeepSeek streaming failed: {exc}")
                 yield _json_line("done", elapsed_ms=int((time.time() - t1) * 1000), fallback=True)
                 yield _json_line(
                     "meta",
@@ -954,8 +945,7 @@ def generate_answer_stream(question):
         )
         return
 
-    fallback_text, _, _ = _demo_answer(question, tournament_data, system_message)
-    yield _json_line("delta", text=fallback_text)
+    yield _json_line("delta", text="Error: No chat provider configured (DEEPSEEK_API_KEY and HF_TOKEN are missing).")
     yield _json_line("done", elapsed_ms=0, fallback=True)
     yield _json_line(
         "meta",
