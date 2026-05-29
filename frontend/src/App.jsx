@@ -1,0 +1,453 @@
+import { useState, useRef, useEffect } from 'react'
+
+const SUGGESTIONS = [
+  "Who won the Street Fighter 6 bracket?",
+  "Were there any upsets?",
+  "Who had the most wins?",
+  "Tell me about the grand finals",
+]
+
+function formatTime(date) {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function getComicWord(index) {
+  const words = ['BAM!', 'BOOM!', 'HYPE!', 'K.O.!', 'CRUSH!', 'COMBO!', 'FIST!']
+  return words[index % words.length]
+}
+
+export default function App() {
+  const [messages, setMessages] = useState([])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [crackles, setCrackles] = useState([])
+  const messagesEndRef = useRef(null)
+  const inputRef = useRef(null)
+
+  // Generate background Kirby Crackle dots on mount
+  useEffect(() => {
+    const dots = []
+    const numDots = 30
+    for (let i = 0; i < numDots; i++) {
+      const size = Math.random() * 12 + 4
+      dots.push({
+        id: i,
+        size,
+        left: `${Math.random() * 100}%`,
+        top: `${Math.random() * 100}%`,
+        opacity: Math.random() * 0.5 + 0.1,
+      })
+    }
+    setCrackles(dots)
+  }, [])
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, loading])
+
+  function updateMessage(messageId, updater) {
+    setMessages(prev => prev.map(msg => (msg.id === messageId ? updater(msg) : msg)))
+  }
+
+  function parseStreamLine(line, onEvent) {
+    const trimmed = line.trim()
+    if (!trimmed) return
+    try {
+      onEvent(JSON.parse(trimmed))
+    } catch (err) {
+      throw new Error(`Invalid stream chunk: ${trimmed.slice(0, 120)}`)
+    }
+  }
+
+  async function sendMessage(text) {
+    const question = (text || input).trim()
+    if (!question || loading) return
+
+    const userId = crypto.randomUUID()
+    const assistantId = crypto.randomUUID()
+    const startedAt = performance.now()
+    const userMsg = { id: userId, role: 'user', text: question, time: new Date() }
+    const assistantMsg = {
+      id: assistantId,
+      role: 'ai',
+      text: 'Reading bracket data...',
+      time: new Date(),
+      streaming: true,
+      pending: true,
+    }
+
+    setMessages(prev => [...prev, userMsg, assistantMsg])
+    setInput('')
+    setLoading(true)
+
+    try {
+      const res = await fetch('/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+      })
+      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      if (!res.body) throw new Error('Streaming is unavailable in this browser')
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          parseStreamLine(line, (event) => {
+            if (event.type === 'meta') {
+              updateMessage(assistantId, (msg) => ({
+                ...msg,
+                context: event.context,
+                systemPrompt: event.system_prompt,
+              }))
+              return
+            }
+
+            if (event.type === 'status') {
+              updateMessage(assistantId, (msg) => ({
+                ...msg,
+                text: msg.pending ? event.text : msg.text,
+              }))
+              return
+            }
+
+            if (event.type === 'delta') {
+              updateMessage(assistantId, (msg) => ({
+                ...msg,
+                text: msg.pending ? event.text ?? '' : `${msg.text ?? ''}${event.text ?? ''}`,
+                pending: false,
+              }))
+              return
+            }
+
+            if (event.type === 'done') {
+              const latency = ((performance.now() - startedAt) / 1000).toFixed(2)
+              updateMessage(assistantId, (msg) => ({
+                ...msg,
+                streaming: false,
+                text: msg.pending ? 'No answer came back. Try again in a moment.' : msg.text,
+                pending: false,
+                latency,
+              }))
+              return
+            }
+
+            if (event.type === 'error') {
+              throw new Error(event.message || 'Stream error')
+            }
+          })
+        }
+      }
+
+      if (buffer.trim()) {
+        parseStreamLine(buffer, (event) => {
+          if (event.type === 'delta') {
+            updateMessage(assistantId, (msg) => ({
+              ...msg,
+              text: msg.pending ? event.text ?? '' : `${msg.text ?? ''}${event.text ?? ''}`,
+              pending: false,
+            }))
+          }
+        })
+      }
+
+      updateMessage(assistantId, (msg) => ({
+        ...msg,
+        streaming: false,
+        text: msg.pending ? 'No answer came back. Try again in a moment.' : msg.text,
+        pending: false,
+        latency: msg.latency ?? ((performance.now() - startedAt) / 1000).toFixed(2),
+      }))
+    } catch (err) {
+      const elapsed = ((performance.now() - startedAt) / 1000).toFixed(2)
+      updateMessage(assistantId, (msg) => ({
+        ...msg,
+        text: `Error: ${err.message}`,
+        streaming: false,
+        pending: false,
+        error: true,
+        latency: elapsed,
+      }))
+    } finally {
+      setLoading(false)
+      inputRef.current?.focus()
+    }
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage()
+    }
+  }
+
+  const hasMessages = messages.length > 0
+
+  return (
+    <div className="flex-1 flex flex-col h-screen overflow-hidden relative font-body-md">
+      {/* Ambient Effects */}
+      <div className="fixed inset-0 pointer-events-none opacity-20 bg-speedlines z-0" />
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden" id="crackle-container">
+        {crackles.map((dot) => (
+          <div
+            key={dot.id}
+            className="kirby-crackle"
+            style={{
+              width: `${dot.size}px`,
+              height: `${dot.size}px`,
+              left: dot.left,
+              top: dot.top,
+              opacity: dot.opacity,
+            }}
+          />
+        ))}
+      </div>
+
+      {/* Top Navigation Container (Desktop) / Header */}
+      <header className="hidden md:flex justify-between items-center w-full px-margin-desktop py-4 z-50 overflow-hidden border-b-4 border-primary-container bg-background">
+        <div className="flex items-center gap-8">
+          <h1 className="font-display-lg text-display-lg text-primary-container italic skew-x-[-12deg] tracking-tighter">
+            PATH OF THE FIST
+          </h1>
+          <nav className="flex gap-6 mt-2">
+            <span className="text-on-surface-variant font-label-caps text-label-caps px-2 py-1 select-none">
+              COMBO BREAKER 2025
+            </span>
+          </nav>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="flex gap-2">
+            <button className="p-2 hover:bg-primary-container hover:text-on-primary-container transition-colors skew-x-[-12deg]">
+              <span className="material-symbols-outlined text-primary-container hover:text-on-primary-container">
+                notifications
+              </span>
+            </button>
+            <button className="p-2 hover:bg-primary-container hover:text-on-primary-container transition-colors skew-x-[-12deg]">
+              <span className="material-symbols-outlined text-primary-container hover:text-on-primary-container">
+                person
+              </span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex overflow-hidden relative z-10">
+        {/* Center: Hype Chat Panel */}
+        <section className="flex-1 flex flex-col p-4 md:p-8 h-full overflow-hidden w-full max-w-6xl mx-auto">
+
+
+          {/* Chat Messages Area */}
+          <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-6 custom-scrollbar pb-6">
+            {/* System Message */}
+            <div className="text-center my-2 flex-shrink-0">
+              <span className="inline-block bg-error text-on-error font-label-caps text-label-caps px-4 py-1 border-y-2 border-dashed border-on-error uppercase">
+                GraphRAG Commentator Online
+              </span>
+            </div>
+
+            {/* Empty State / Welcome */}
+            {!hasMessages && (
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-6 bg-surface-container-high border-2 border-dashed border-outline-variant max-w-2xl mx-auto my-auto skew-x-[-6deg] flex-shrink-0">
+                <div className="skew-x-[6deg] flex flex-col items-center gap-4">
+                  <span className="material-symbols-outlined text-primary-container text-5xl animate-bounce">
+                    sports_kabaddi
+                  </span>
+                  <h3 className="font-headline-lg text-headline-lg text-primary-fixed uppercase tracking-wide">
+                    ENTER THE ARENA
+                  </h3>
+                  <p className="text-on-surface-variant font-body-md text-sm max-w-md">
+                    I am your AI commentator powered by GraphRAG with full real-time access to the Combo Breaker 2025 tournament bracket, matches, player logs, and records. Ask me anything!
+                  </p>
+                  <div className="flex flex-wrap gap-3 justify-center mt-4">
+                    {SUGGESTIONS.map((s) => (
+                      <button
+                        key={s}
+                        className="bg-surface text-on-surface font-label-caps text-label-caps px-4 py-2 border-2 border-primary-container hover:bg-primary-container hover:text-on-primary-container transition-all hover:scale-95 duration-100 skew-x-[-12deg]"
+                        onClick={() => sendMessage(s)}
+                      >
+                        <span className="inline-block skew-x-[12deg]">{s}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Messages list */}
+            {messages.map((msg, i) => (
+              <div
+                key={msg.id || i}
+                className={`flex flex-col gap-1 max-w-[85%] relative ${
+                  msg.role === 'user' ? 'items-end self-end' : 'items-start self-start mt-4'
+                }`}
+              >
+                {/* Meta details header */}
+                <div className="flex items-center gap-2 mb-1">
+                  {msg.role === 'user' ? (
+                    <>
+                      <span className="font-label-caps text-label-caps text-primary-fixed">
+                        P1_CHALLENGER
+                      </span>
+                      <div className="w-6 h-6 rounded-sm bg-surface-variant overflow-hidden border border-outline flex items-center justify-center">
+                        <span className="material-symbols-outlined text-sm text-outline-variant">
+                          person
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-8 h-8 bg-tertiary-container border-2 border-on-tertiary-container flex items-center justify-center -skew-x-12">
+                        <span
+                          className="material-symbols-outlined text-on-tertiary-container font-bold skew-x-12"
+                          style={{ fontVariationSettings: "'FILL' 1" }}
+                        >
+                          smart_toy
+                        </span>
+                      </div>
+                      <span className="font-label-caps text-label-caps text-tertiary-container bg-on-tertiary-container px-2 py-0.5">
+                        FIST BOT [AI]
+                      </span>
+                      {msg.latency && (
+                        <span className="font-label-caps text-[10px] text-outline-variant bg-surface-container-low px-2 py-0.5 flex items-center gap-1 border border-outline-variant">
+                          <span className="material-symbols-outlined text-[12px]">timer</span>{' '}
+                          {msg.latency}s
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Message Bubble Body */}
+                <div
+                  className={`relative font-chat-msg text-chat-msg ${
+                    msg.role === 'user'
+                      ? 'p-4 bg-surface-bright text-on-surface border-2 border-primary-fixed user-bubble'
+                      : `p-5 pr-16 md:pr-24 bg-tertiary-container text-on-tertiary-container border-4 border-on-tertiary-container bot-bubble font-bold shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] ${
+                          msg.pending ? 'animate-pulse' : ''
+                        } ${msg.error ? 'border-error text-on-error bg-error-container' : ''}`
+                  }`}
+                >
+                  {/* Comic Action Graphic */}
+                  {msg.role !== 'user' && !msg.pending && !msg.error && (
+                    <div
+                      className="absolute -top-6 -right-6 font-display-lg text-display-lg text-secondary-container stroke-black drop-shadow-[2px_2px_0_rgba(0,0,0,1)] rotate-12 z-20 pointer-events-none select-none"
+                      style={{ WebkitTextStroke: '2px black' }}
+                    >
+                      {getComicWord(i)}
+                    </div>
+                  )}
+
+                  <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+
+                  {msg.time && (
+                    <div
+                      className={`text-[10px] mt-2 font-label-caps ${
+                        msg.role === 'user'
+                          ? 'text-outline-variant text-right'
+                          : 'text-on-tertiary-container/60'
+                      }`}
+                    >
+                      {formatTime(msg.time)}
+                    </div>
+                  )}
+
+                  {/* Render debugging logs inline with AI responses */}
+                  {(msg.context || msg.systemPrompt) && (
+                    <SourceContext context={msg.context} systemPrompt={msg.systemPrompt} />
+                  )}
+                </div>
+              </div>
+            ))}
+
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Chat Input */}
+          <div className="mt-auto pt-4 bg-background z-20 flex-shrink-0">
+            <div className="flex border-2 border-primary-container bg-surface focus-within:border-tertiary-container transition-colors p-1 skew-x-[-6deg]">
+              <input
+                ref={inputRef}
+                className="flex-1 bg-transparent border-none text-on-surface focus:ring-0 font-label-caps text-label-caps placeholder-on-surface-variant px-4 skew-x-[6deg] focus:outline-none"
+                placeholder={loading ? 'COMMENTATING...' : 'ENTER THE ARENA...'}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={loading}
+                autoFocus
+              />
+              <button
+                className="bg-primary-container text-on-primary-container px-6 py-2 font-headline-lg-mobile text-headline-lg-mobile uppercase hover:bg-tertiary-container hover:text-on-tertiary-container transition-colors flex items-center justify-center skew-x-[6deg] -ml-2 border-l-2 border-background disabled:opacity-40 disabled:cursor-not-allowed font-bold"
+                onClick={() => sendMessage()}
+                disabled={!input.trim() || loading}
+              >
+                SEND
+              </button>
+            </div>
+            <p className="text-center font-label-caps text-[10px] text-outline-variant mt-2">
+              Powered by DeepSeek via GraphRAG · Answers stream live with full tournament context
+            </p>
+          </div>
+        </section>
+      </main>
+    </div>
+  )
+}
+
+function SourceContext({ context, systemPrompt }) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="mt-4 border-2 border-outline-variant bg-surface text-on-surface skew-x-[-6deg] overflow-hidden">
+      <div className="skew-x-[6deg]">
+        <button
+          className="w-full flex justify-between items-center px-4 py-2 font-label-caps text-label-caps text-primary-fixed bg-surface-container-high hover:bg-primary-container hover:text-on-primary-container transition-colors"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-sm">terminal</span>
+            DEBUG INFO (GraphRAG Context)
+          </span>
+          <span className="material-symbols-outlined text-sm">
+            {expanded ? 'keyboard_arrow_up' : 'keyboard_arrow_down'}
+          </span>
+        </button>
+
+        {expanded && (
+          <div className="p-4 flex flex-col gap-4 font-mono text-[11px] text-on-surface-variant bg-surface-container-lowest max-h-[300px] overflow-y-auto custom-scrollbar">
+            {systemPrompt && (
+              <div className="flex flex-col gap-1 border-l-2 border-primary-container pl-3">
+                <h5 className="text-primary-fixed font-bold uppercase tracking-wider text-[10px]">
+                  System Prompt
+                </h5>
+                <p className="whitespace-pre-wrap leading-relaxed opacity-85 select-all text-left">
+                  {systemPrompt}
+                </p>
+              </div>
+            )}
+            {context && (
+              <div className="flex flex-col gap-1 border-l-2 border-secondary pl-3">
+                <h5 className="text-secondary font-bold uppercase tracking-wider text-[10px]">
+                  Tournament Data Context
+                </h5>
+                <p className="whitespace-pre-wrap leading-relaxed opacity-85 select-all text-left">
+                  {context}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

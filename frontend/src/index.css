@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .halftone-bg {
+    background-size: 8px 8px;
+    background-image: radial-gradient(circle, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  }
+  .comic-border {
+    border: 2px solid theme('colors.primary-container');
+    box-shadow: 4px 4px 0px 0px theme('colors.primary-container');
+  }
+  .bot-bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -15px;
+    left: 20px;
+    border-width: 15px 15px 0 0;
+    border-style: solid;
+    border-color: theme('colors.tertiary-container') transparent transparent transparent;
+  }
+  .user-bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -15px;
+    right: 20px;
+    border-width: 15px 0 0 15px;
+    border-style: solid;
+    border-color: theme('colors.surface-bright') transparent transparent transparent;
+  }
+  .kirby-crackle {
+    position: absolute;
+    border-radius: 50%;
+    background: black;
+    border: 1px solid theme('colors.primary-container');
+    pointer-events: none;
+  }
+
+  /* Custom scrollbar styled with the theme's colors */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: theme('colors.surface-container-lowest');
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: theme('colors.outline-variant');
+    border-radius: 9999px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: theme('colors.primary-container');
+  }
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: theme('colors.background');
+}

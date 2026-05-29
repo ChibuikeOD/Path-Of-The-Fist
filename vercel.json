@@ -1,0 +1,55 @@
+{
+  "name": "path-of-the-fist",
+  "version": 2,
+  "builds": [
+    {
+      "src": "backend/main.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/chat/stream",
+      "dest": "backend/main.py"
+    },
+    {
+      "src": "/chat",
+      "dest": "backend/main.py"
+    },
+    {
+      "src": "/events/(.*)",
+      "dest": "backend/main.py"
+    },
+    {
+      "src": "/players/(.*)",
+      "dest": "backend/main.py"
+    },
+    {
+      "src": "/sets/(.*)",
+      "dest": "backend/main.py"
+    },
+    {
+      "src": "/health",
+      "dest": "backend/main.py"
+    },
+    {
+      "src": "/sync/(.*)",
+      "dest": "backend/main.py"
+    },
+    {
+      "src": "/assets/(.*)",
+      "dest": "frontend/assets/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "frontend/$1"
+    }
+  ]
+}

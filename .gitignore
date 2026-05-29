@@ -1,0 +1,16 @@
+.vercel
+.venv
+.env*
+backend/.env*
+__pycache__/
+**/__pycache__/
+*.pyc
+node_modules/
+dist/
+*.mp4
+*.pdf
+debug-e51cb9.log
+Text to PostgREST/outputs/
+Text to PostgREST/supabase_postgrest_model/
+Text to PostgREST/supabase_python_model/
+*.log
