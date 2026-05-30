@@ -6,8 +6,6 @@ import requests
 from typing import Iterator
 from neo4j import GraphDatabase
 from database import driver
-from huggingface_hub import InferenceClient
-from huggingface_hub.errors import HfHubHTTPError
 from constants import DEFAULT_ELO_RATING
 
 class NonRetryableError(Exception):
@@ -50,11 +48,6 @@ NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "")
 
-HF_ENDPOINT_URL = os.environ.get(
-    "HF_ENDPOINT_URL",
-    "https://t0fbmophcpq2w634.us-east-1.aws.endpoints.huggingface.cloud",
-)
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
 DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
 DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-pro").strip()
@@ -681,99 +674,7 @@ def _call_deepseek_chat_completion_stream(system_message: str, user_message: str
             raise RuntimeError(f"DeepSeek chat completion streaming and fallback both failed. Streaming error: {last_error}. Fallback error: {exc}")
 
 
-def _generate_hf_answer(question: str, tournament_data: str, system_message: str, start_time: float) -> str:
-    endpoint = HF_ENDPOINT_URL.rstrip("/")
-
-    model_id = "unsloth/llama-2-7b-chat"
-    try:
-        resp = requests.get(f"{endpoint}/v1/models", headers={"Authorization": f"Bearer {HF_TOKEN}"}, timeout=5)
-        if resp.status_code == 200:
-            models_data = resp.json()
-            if "data" in models_data and len(models_data["data"]) > 0:
-                model_id = models_data["data"][0]["id"]
-                print(f"Detected model ID: {model_id}")
-    except Exception as e:
-        print(f"Failed to detect model ID (using fallback): {e}")
-
-    user_message = (
-        f"TOURNAMENT DATA:\n{tournament_data}\n\nUSER QUESTION:\n{question}\n\n"
-        "Answer concisely based only on the data above."
-    )
-
-    print("Calling Hugging Face Inference...")
-    _agent_log(
-        "hf_chat_start",
-        {"endpoint_suffix": endpoint[-24:], "tournament_chars": len(tournament_data), "question_chars": len(question)},
-        "B",
-    )
-    t1 = time.time()
-
-    MAX_RETRIES = 5
-    out = None
-    for attempt in range(1, MAX_RETRIES + 1):
-        elapsed = time.time() - start_time
-        if elapsed >= 30.0:
-            print("HF inference: 30s budget exceeded before request.")
-            return "Error: Chat generation timed out after 30 seconds."
-
-        budget = 30.0 - elapsed
-        request_timeout = min(15.0, budget)
-        try:
-            client = InferenceClient(base_url=endpoint, token=HF_TOKEN, timeout=request_timeout)
-            out = client.chat_completion(
-                model=model_id,
-                messages=[
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": user_message},
-                ],
-                max_tokens=1000,
-                temperature=0.4,
-                stop=["###"],
-            )
-            break
-        except HfHubHTTPError as exc:
-            resp = getattr(exc, "response", None)
-            status = getattr(resp, "status_code", None)
-            _agent_log(
-                "hf_chat_http_error",
-                {
-                    "attempt": attempt,
-                    "status_code": status,
-                    "body_snippet": (getattr(resp, "text", "") or "")[:500],
-                    "elapsed_ms": int((time.time() - t1) * 1000),
-                },
-                "C",
-            )
-            if status == 503 and attempt < MAX_RETRIES:
-                wait = min(2 * attempt, 10)
-                print(f"  [WAIT] Endpoint warming up (503), retry {attempt}/{MAX_RETRIES} in {wait}s...")
-                time.sleep(wait)
-                continue
-            
-            # For non-503 HTTP errors (like 400 paused, 404, or after max retries),
-            # return the error immediately.
-            print(f"HF HTTP error ({status}); returning error.")
-            return f"Error: Hugging Face API returned status {status}."
-        except Exception as exc:
-            if attempt < MAX_RETRIES:
-                wait = min(2 * attempt, 10)
-                print(f"  [WAIT] Connection error ({type(exc).__name__}), retry {attempt}/{MAX_RETRIES} in {wait}s...")
-                time.sleep(wait)
-                continue
-            if attempt == MAX_RETRIES:
-                print(f"HF inference failed ({exc}); returning error.")
-                return f"Error: Hugging Face inference failed: {exc}"
-            raise
-
-    elapsed = time.time() - t1
-    print(f"Inference latency: {elapsed:.2f}s ({elapsed/60:.1f} min)")
-    text = _message_text_from_chat_output(out)
-    _agent_log(
-        "hf_chat_done",
-        {"answer_chars": len(text), "elapsed_ms": int((time.time() - t1) * 1000)},
-        "D",
-    )
-    return text
+# Hugging Face inference logic removed
 
 
 def generate_answer(question):
@@ -783,7 +684,6 @@ def generate_answer(question):
 
     provider = CHAT_PROVIDER
     use_deepseek = provider in {"deepseek", "auto"} and bool(DEEPSEEK_API_KEY)
-    use_hf = provider in {"huggingface", "hf", "auto"} and bool(HF_TOKEN)
 
     if use_deepseek:
         user_message = (
@@ -810,14 +710,10 @@ def generate_answer(question):
         except Exception as exc:
             print(f"DeepSeek inference failed ({exc}); returning error.")
             _agent_log("deepseek_chat_failed", {"error": str(exc)}, "C")
-            if provider != "auto":
-                return f"Error: DeepSeek inference failed: {exc}", tournament_data, system_message
+            return f"Error: DeepSeek inference failed: {exc}", tournament_data, system_message
 
-    if use_hf:
-        return _generate_hf_answer(question, tournament_data, system_message, start_time), tournament_data, system_message
-
-    print("Chat provider not configured for Hugging Face/DeepSeek.")
-    return "Error: No chat provider configured (DEEPSEEK_API_KEY and HF_TOKEN are missing).", tournament_data, system_message
+    print("Chat provider not configured for DeepSeek.")
+    return "Error: No chat provider configured (DEEPSEEK_API_KEY is missing).", tournament_data, system_message
 
 
 def generate_answer_stream(question):
@@ -834,7 +730,6 @@ def generate_answer_stream(question):
 
     provider = CHAT_PROVIDER
     use_deepseek = provider in {"deepseek", "auto"} and bool(DEEPSEEK_API_KEY)
-    use_hf = provider in {"huggingface", "hf", "auto"} and bool(HF_TOKEN)
 
     if use_deepseek:
         yield _json_line("status", text="Generating answer...")
@@ -869,34 +764,18 @@ def generate_answer_stream(question):
             return
         except Exception as exc:
             _agent_log("deepseek_chat_failed", {"error": str(exc), "streaming": True}, "C")
-            if provider == "auto" and use_hf:
-                print(f"DeepSeek streaming failed ({exc}); falling back to Hugging Face.")
-            else:
-                print(f"DeepSeek streaming failed ({exc}); returning error.")
-                yield _json_line("delta", text=f"Error: DeepSeek streaming failed: {exc}")
-                yield _json_line("done", elapsed_ms=int((time.time() - t1) * 1000), fallback=True)
-                yield _json_line(
-                    "meta",
-                    context=tournament_data,
-                    system_prompt=system_message,
-                    provider=provider,
-                )
-                return
+            print(f"DeepSeek streaming failed ({exc}); returning error.")
+            yield _json_line("delta", text=f"Error: DeepSeek streaming failed: {exc}")
+            yield _json_line("done", elapsed_ms=int((time.time() - t1) * 1000), fallback=True)
+            yield _json_line(
+                "meta",
+                context=tournament_data,
+                system_prompt=system_message,
+                provider=provider,
+            )
+            return
 
-    if use_hf:
-        yield _json_line("status", text="Generating fallback answer...")
-        answer = _generate_hf_answer(question, tournament_data, system_message, start_time)
-        yield _json_line("delta", text=answer)
-        yield _json_line("done", elapsed_ms=0, fallback=True)
-        yield _json_line(
-            "meta",
-            context=tournament_data,
-            system_prompt=system_message,
-            provider=provider,
-        )
-        return
-
-    yield _json_line("delta", text="Error: No chat provider configured (DEEPSEEK_API_KEY and HF_TOKEN are missing).")
+    yield _json_line("delta", text="Error: No chat provider configured (DEEPSEEK_API_KEY is missing).")
     yield _json_line("done", elapsed_ms=0, fallback=True)
     yield _json_line(
         "meta",
