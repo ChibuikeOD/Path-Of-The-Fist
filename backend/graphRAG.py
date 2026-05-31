@@ -261,10 +261,71 @@ def detect_mentioned_years(query: str) -> list[str]:
     return list(set(re.findall(r'\b(2022|2023|2024|2025|2026)\b', query)))
 
 
+def is_character_question(query: str) -> bool:
+    """Detect questions that need Character-node context."""
+    query_lower = query.lower()
+    character_terms = {
+        "character", "characters", "main", "mains", "picks", "pick", "played",
+        "uses", "use", "selected", "selection", "prominent", "popular", "roster",
+    }
+    return any(re.search(rf"\b{re.escape(term)}\b", query_lower) for term in character_terms)
+
+
 def get_local_context(player_names: list[str]) -> str:
     """Retrieves the 2-hop neighborhood context for the specified player names."""
     t0 = time.time()
     _agent_log("neo4j_local_context_start", {"players": player_names}, "A_local")
+    context_lines = []
+
+    player_details_cypher = """
+    MATCH (p:Player)
+    WHERE p.gamertag IN $player_names
+    OPTIONAL MATCH (p)-[:PARTICIPATED_IN]->(e:Event)
+    RETURN p.gamertag AS gamertag,
+           coalesce(p.rating, $default_rating) AS rating,
+           collect(DISTINCT e.tournament_name + ' ' + e.name) AS events
+    """
+
+    player_sets_cypher = """
+    MATCH (p:Player)
+    WHERE p.gamertag IN $player_names
+    MATCH (s:Set)-[:PLAYER1|PLAYER2]->(p)
+    MATCH (s)-[:PLAYER1]->(p1:Player)
+    MATCH (s)-[:PLAYER2]->(p2:Player)
+    MATCH (s)-[:PLAYED_IN]->(e:Event)
+    OPTIONAL MATCH (winner:Player {id: s.winner_id})
+    RETURN p1.gamertag AS p1,
+           coalesce(p1.rating, $default_rating) AS p1_rating,
+           p2.gamertag AS p2,
+           coalesce(p2.rating, $default_rating) AS p2_rating,
+           coalesce(winner.gamertag, 'Unknown') AS winner,
+           e.name AS event,
+           e.tournament_name AS tournament,
+           s.completed_at AS completed_at
+    ORDER BY completed_at DESC
+    LIMIT 25
+    """
+
+    player_character_cypher = """
+    MATCH (p:Player)
+    WHERE p.gamertag IN $player_names
+    OPTIONAL MATCH (p)-[r]->(c:Character)
+    WITH p, r, c
+    WHERE r IS NULL OR type(r) IN [
+        'MAINS', 'PLAYS', 'USES_CHARACTER', 'USED_CHARACTER',
+        'PLAYED_CHARACTER', 'SELECTED_CHARACTER'
+    ]
+    RETURN p.gamertag AS gamertag,
+           collect(DISTINCT CASE
+               WHEN c IS NULL THEN NULL
+               ELSE {
+                   character: c.name,
+                   videogame: c.videogame_name,
+                   relationship: type(r)
+               }
+           END) AS character_links
+    """
+
     try:
         with driver.session() as session:
             details_res = session.run(
@@ -298,6 +359,29 @@ def get_local_context(player_names: list[str]) -> str:
                 context_lines.extend(sets_lines)
             else:
                 context_lines.append("### Relevant Matches\n* No matches found in database.")
+
+            character_res = session.run(player_character_cypher, player_names=player_names)
+            context_lines.append("### Player Character Data")
+            found_character_links = False
+            for record in character_res:
+                links = [link for link in (record["character_links"] or []) if link]
+                if links:
+                    found_character_links = True
+                    for link in links:
+                        context_lines.append(
+                            f"* {record['gamertag']} {link['relationship']} "
+                            f"{link['character']} ({link['videogame']})."
+                        )
+                else:
+                    context_lines.append(
+                        f"* No explicit main/pick/selection relationship is stored for {record['gamertag']}."
+                    )
+            if not found_character_links:
+                context_lines.append(
+                    "* The current graph has playable character rosters by event, but it does not store "
+                    "per-player mains or per-set character selections unless an explicit Player->Character "
+                    "relationship is added."
+                )
     except Exception as exc:
         print(f"Neo4j query failed ({exc}); using fallback local context.")
         _agent_log("neo4j_local_context_fallback", {"error": str(exc)}, "A_local")
@@ -312,7 +396,67 @@ def get_local_context(player_names: list[str]) -> str:
     return context_str
 
 
-def get_global_context(event_names: list[str] = None, years: list[str] = None) -> str:
+def get_character_context(event_names: list[str] = None, years: list[str] = None) -> str:
+    """Retrieve Character-node context for roster/prominence questions."""
+    conditions = []
+    params = {}
+    if event_names:
+        conditions.append("e.name IN $event_names")
+        params["event_names"] = event_names
+    if years:
+        conditions.append("any(yr IN $years WHERE e.tournament_name CONTAINS yr)")
+        params["years"] = years
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    cypher = f"""
+    MATCH (c:Character)-[:PLAYABLE_IN]->(e:Event)
+    {where_clause}
+    WITH c,
+         count(DISTINCT e) AS event_count,
+         collect(DISTINCT e.name) AS events,
+         collect(DISTINCT e.tournament_name) AS tournaments
+    RETURN c.name AS character,
+           c.videogame_name AS videogame,
+           event_count,
+           events,
+           tournaments
+    ORDER BY event_count DESC, character ASC
+    LIMIT 25
+    """
+
+    try:
+        with driver.session() as session:
+            rows = session.run(cypher, **params).data()
+    except Exception as exc:
+        print(f"Neo4j character query failed ({exc}); omitting character context.")
+        return ""
+
+    if not rows:
+        return (
+            "### Character Data\n"
+            "* No Character nodes matched the requested event/year filters.\n"
+        )
+
+    lines = [
+        "### Character Data",
+        "* Character nodes currently represent playable roster availability per event.",
+        "* Prominence metric available in this graph: number of matched events where the character is playable.",
+        "* The graph does not currently store per-set character picks or player mains unless an explicit Player->Character relationship exists.",
+        "#### Most Prominent Characters By Roster Availability",
+    ]
+    for idx, row in enumerate(rows, 1):
+        tournaments = ", ".join(row["tournaments"] or [])
+        events = ", ".join(row["events"] or [])
+        lines.append(
+            f"{idx}. {row['character']} ({row['videogame']}) - playable in "
+            f"{row['event_count']} matched event(s); tournaments: {tournaments}; events: {events}"
+        )
+
+    return "\n".join(lines)
+
+
+def get_global_context(event_names: list[str] = None, years: list[str] = None, include_characters: bool = False) -> str:
     """Retrieves event summaries, filtering by matched names/years or limiting default ones to save tokens."""
     t0 = time.time()
     _agent_log("neo4j_global_context_start", {"events": event_names, "years": years}, "A_global")
@@ -362,7 +506,12 @@ def get_global_context(event_names: list[str] = None, years: list[str] = None) -
 
     if not context_lines:
         print("No event summaries found in Neo4j; using fallback/demo tournament context.")
-        return _load_demo_context()
+        context_lines.append(_load_demo_context())
+
+    if include_characters:
+        character_context = get_character_context(event_names=event_names, years=years)
+        if character_context:
+            context_lines.append(character_context)
 
     context_str = "\n\n".join(context_lines)
     _agent_log(
@@ -394,11 +543,25 @@ def get_database_metadata() -> str:
             # Fetch unique games
             games_res = session.run("MATCH (e:Event) WHERE e.name IS NOT NULL RETURN DISTINCT e.name AS name ORDER BY name")
             games = [r["name"] for r in games_res]
+
+            character_games_res = session.run(
+                """
+                MATCH (c:Character)
+                WHERE c.videogame_name IS NOT NULL
+                RETURN c.videogame_name AS game, count(DISTINCT c) AS characters
+                ORDER BY game
+                """
+            )
+            character_games = [
+                f"{r['game']} ({r['characters']} characters)"
+                for r in character_games_res
+            ]
         
         metadata_lines = [
             "### DATABASE METADATA",
             f"* **Available Tournaments**: {', '.join(tourneys)}",
             f"* **Available Games**: {', '.join(games)}",
+            f"* **Games With Character Rosters**: {', '.join(character_games)}",
             ""
         ]
         _DATABASE_METADATA_CACHE = "\n".join(metadata_lines)
@@ -412,21 +575,30 @@ def get_database_metadata() -> str:
 def build_rag_context(question: str) -> tuple[str, str]:
     """Detects players/events/years and builds context + commentator persona prompt."""
     mentioned_players = detect_mentioned_players(question)
+    mentioned_events = detect_mentioned_events(question)
+    mentioned_years = detect_mentioned_years(question)
+    include_characters = is_character_question(question)
 
     if mentioned_players:
         print(f"Routing to Local Search (Players detected: {mentioned_players})")
         _agent_log("routing_local", {"detected_players": mentioned_players, "question": question}, "routing")
         tournament_data = get_local_context(mentioned_players)
+        if include_characters and (mentioned_events or mentioned_years):
+            character_context = get_character_context(event_names=mentioned_events, years=mentioned_years)
+            if character_context:
+                tournament_data = f"{tournament_data}\n\n{character_context}" if tournament_data else character_context
     else:
-        mentioned_events = detect_mentioned_events(question)
-        mentioned_years = detect_mentioned_years(question)
         print(f"Routing to Global Search (Events: {mentioned_events}, Years: {mentioned_years})")
         _agent_log(
             "routing_global",
             {"question": question, "events": mentioned_events, "years": mentioned_years},
             "routing"
         )
-        tournament_data = get_global_context(event_names=mentioned_events, years=mentioned_years)
+        tournament_data = get_global_context(
+            event_names=mentioned_events,
+            years=mentioned_years,
+            include_characters=include_characters,
+        )
 
     # Prepend database metadata so the model always knows which tournaments/games are available
     db_metadata = get_database_metadata()
@@ -441,7 +613,9 @@ You are the Voice of Combo Breaker (covering 2022 - 2026)—a high-energy, elite
 1. Hype Dial: Use high-energy verbs (Ascended, Dismantled, Clutched, Decimated) and stage atmosphere details.
 2. Data Integrity: You are strictly forbidden from inventing winners.
 3. Elo Ratings: Highlight rivalries between similarly rated players. Crucially, you must ONLY identify a match as an upset when the data explicitly shows a lower-rated player defeating a higher-rated player.
-4. Output: Do not show analysis steps, just provide the hype narrative output. Do not use markdown bold (**) in the output.
+4. Character Data: Character nodes represent playable rosters for an event/game. Treat "most prominent character" as roster availability across the matched events unless the context explicitly provides usage, pick, or main data.
+5. Player Mains: Do not infer a player's main from general knowledge, popularity, nationality, team, match wins, or roster availability. Only answer player-main or character-pick questions when the context includes an explicit Player->Character relationship or set-level character selection. If that data is absent, say the graph does not currently store that information.
+6. Output: Do not show analysis steps, just provide the hype narrative output. Do not use markdown bold (**) in the output.
 """
     return tournament_data, system_message
 

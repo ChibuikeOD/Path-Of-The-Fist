@@ -8,8 +8,8 @@ const SUGGESTIONS = [
 ]
 
 const AD_UNITS = {
-  left: '2440194',
-  right: '2440193',
+  left: ['2440194', '2440198'],
+  right: ['2440193', '2440198'],
 }
 
 function formatTime(date) {
@@ -112,11 +112,6 @@ export default function App() {
         for (const line of lines) {
           parseStreamLine(line, (event) => {
             if (event.type === 'meta') {
-              updateMessage(assistantId, (msg) => ({
-                ...msg,
-                context: event.context,
-                systemPrompt: event.system_prompt,
-              }))
               return
             }
 
@@ -400,11 +395,6 @@ export default function App() {
                       {formatTime(msg.time)}
                     </div>
                   )}
-
-                  {/* Render debugging logs inline with AI responses */}
-                  {(msg.context || msg.systemPrompt) && (
-                    <SourceContext context={msg.context} systemPrompt={msg.systemPrompt} />
-                  )}
                 </div>
               </div>
             ))}
@@ -454,67 +444,24 @@ function AdRail({ id, side }) {
       }`}
       aria-label={`${side} advertisement`}
     >
-      <div
-        id={`aads-frame-${id}`}
-        className="w-full mx-auto relative z-20 border-2 border-outline-variant bg-surface-container-low p-2 skew-x-[-6deg]"
-      >
-        <iframe
-          title={`AADS advertisement ${id}`}
-          data-aa={id}
-          src={`https://acceptable.a-ads.com/${id}/?size=Adaptive`}
-          className="block mx-auto w-full min-h-[90px] skew-x-[6deg]"
-          style={{ border: 0, padding: 0, overflow: 'hidden' }}
-        />
+      <div className="flex flex-col gap-4">
+        {id.map((adId, index) => (
+          <div
+            key={`${side}-${adId}-${index}`}
+            id={`aads-frame-${side}-${adId}-${index}`}
+            className="w-full mx-auto relative z-20 border-2 border-outline-variant bg-surface-container-low p-2 skew-x-[-6deg]"
+          >
+            <iframe
+              title={`AADS advertisement ${adId} ${side} ${index + 1}`}
+              data-aa={adId}
+              src={`https://acceptable.a-ads.com/${adId}/?size=Adaptive`}
+              className="block mx-auto w-full min-h-[90px] skew-x-[6deg]"
+              style={{ border: 0, padding: 0, overflow: 'hidden' }}
+            />
+          </div>
+        ))}
       </div>
     </aside>
-  )
-}
-
-function SourceContext({ context, systemPrompt }) {
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <div className="mt-4 border-2 border-outline-variant bg-surface text-on-surface skew-x-[-6deg] overflow-hidden">
-      <div className="skew-x-[6deg]">
-        <button
-          className="w-full flex justify-between items-center px-4 py-2 font-label-caps text-label-caps text-primary-fixed bg-surface-container-high hover:bg-primary-container hover:text-on-primary-container transition-colors"
-          onClick={() => setExpanded(!expanded)}
-        >
-          <span className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-sm">terminal</span>
-            DEBUG INFO (GraphRAG Context)
-          </span>
-          <span className="material-symbols-outlined text-sm">
-            {expanded ? 'keyboard_arrow_up' : 'keyboard_arrow_down'}
-          </span>
-        </button>
-
-        {expanded && (
-          <div className="p-4 flex flex-col gap-4 font-mono text-[11px] text-on-surface-variant bg-surface-container-lowest max-h-[300px] overflow-y-auto custom-scrollbar">
-            {systemPrompt && (
-              <div className="flex flex-col gap-1 border-l-2 border-primary-container pl-3">
-                <h5 className="text-primary-fixed font-bold uppercase tracking-wider text-[10px]">
-                  System Prompt
-                </h5>
-                <p className="whitespace-pre-wrap leading-relaxed opacity-85 select-all text-left">
-                  {systemPrompt}
-                </p>
-              </div>
-            )}
-            {context && (
-              <div className="flex flex-col gap-1 border-l-2 border-secondary pl-3">
-                <h5 className="text-secondary font-bold uppercase tracking-wider text-[10px]">
-                  Tournament Data Context
-                </h5>
-                <p className="whitespace-pre-wrap leading-relaxed opacity-85 select-all text-left">
-                  {context}
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
   )
 }
 
