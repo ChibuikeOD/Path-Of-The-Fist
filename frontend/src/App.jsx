@@ -253,7 +253,7 @@ export default function App() {
           </h1>
           <nav className="flex gap-6 mt-2">
             <span className="text-on-surface-variant font-label-caps text-label-caps px-2 py-1 select-none">
-              COMBO BREAKER 2025
+              YOUR COMBO BREAKER ANALYTICS ASSISTANT
             </span>
           </nav>
         </div>
