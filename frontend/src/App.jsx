@@ -281,13 +281,6 @@ export default function App() {
 
           {/* Chat Messages Area */}
           <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-6 custom-scrollbar pb-6">
-            {/* System Message */}
-            <div className="text-center my-2 flex-shrink-0">
-              <span className="inline-block bg-error text-on-error font-label-caps text-label-caps px-4 py-1 border-y-2 border-dashed border-on-error uppercase">
-                GraphRAG Commentator Online
-              </span>
-            </div>
-
             {/* Empty State / Welcome */}
             {!hasMessages && (
               <div className="flex-1 flex flex-col items-center justify-center text-center p-6 bg-surface-container-high border-2 border-dashed border-outline-variant max-w-2xl mx-auto my-auto skew-x-[-6deg] flex-shrink-0">
