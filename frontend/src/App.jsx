@@ -7,6 +7,11 @@ const SUGGESTIONS = [
   "Who performed best in each game",
 ]
 
+const AD_UNITS = {
+  left: '2440194',
+  right: '2440193',
+}
+
 function formatTime(date) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
@@ -55,7 +60,7 @@ export default function App() {
     try {
       onEvent(JSON.parse(trimmed))
     } catch (err) {
-      throw new Error(`Invalid stream chunk: ${trimmed.slice(0, 120)}`)
+      throw new Error(`Invalid stream chunk: ${trimmed.slice(0, 120)}`, { cause: err })
     }
   }
 
@@ -274,9 +279,11 @@ export default function App() {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex overflow-hidden relative z-10">
+      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden relative z-10">
+        <AdRail id={AD_UNITS.left} side="left" />
+
         {/* Center: Hype Chat Panel */}
-        <section className="flex-1 flex flex-col p-4 md:p-8 h-full overflow-hidden w-full max-w-6xl mx-auto">
+        <section className="flex-1 flex flex-col p-4 md:p-8 h-full overflow-hidden w-full max-w-5xl mx-auto">
 
 
           {/* Chat Messages Area */}
@@ -377,7 +384,6 @@ export default function App() {
                     <ThinkingAccordion
                       thinking={msg.thinking}
                       isThinking={msg.isThinking}
-                      streaming={msg.streaming}
                     />
                   )}
 
@@ -433,8 +439,34 @@ export default function App() {
             </p>
           </div>
         </section>
+
+        <AdRail id={AD_UNITS.right} side="right" />
       </main>
     </div>
+  )
+}
+
+function AdRail({ id, side }) {
+  return (
+    <aside
+      className={`order-1 lg:order-none shrink-0 w-full lg:w-44 xl:w-56 p-3 md:p-4 lg:py-8 ${
+        side === 'left' ? 'lg:pl-6 lg:pr-2' : 'lg:pl-2 lg:pr-6'
+      }`}
+      aria-label={`${side} advertisement`}
+    >
+      <div
+        id={`aads-frame-${id}`}
+        className="w-full mx-auto relative z-20 border-2 border-outline-variant bg-surface-container-low p-2 skew-x-[-6deg]"
+      >
+        <iframe
+          title={`AADS advertisement ${id}`}
+          data-aa={id}
+          src={`https://acceptable.a-ads.com/${id}/?size=Adaptive`}
+          className="block mx-auto w-full min-h-[90px] skew-x-[6deg]"
+          style={{ border: 0, padding: 0, overflow: 'hidden' }}
+        />
+      </div>
+    </aside>
   )
 }
 
@@ -507,16 +539,9 @@ function parseThinkingAndAnswer(fullText) {
   return { thinking, answer };
 }
 
-function ThinkingAccordion({ thinking, isThinking, streaming }) {
+function ThinkingAccordion({ thinking, isThinking }) {
   const [userToggled, setUserToggled] = useState(false)
   const [isOpen, setIsOpen] = useState(true)
-
-  // Automatically collapse when thinking finishes
-  useEffect(() => {
-    if (!isThinking && !streaming) {
-      setIsOpen(false)
-    }
-  }, [isThinking, streaming])
 
   if (!thinking) return null
 
