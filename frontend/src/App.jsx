@@ -292,7 +292,7 @@ export default function App() {
                     ENTER THE ARENA
                   </h3>
                   <p className="text-on-surface-variant font-body-md text-sm max-w-md">
-                    I am your AI commentator powered by GraphRAG with full real-time access to the Combo Breaker 2025 tournament bracket, matches, player logs, and records. Ask me anything!
+                    Ask me anything about Combo Breaker from 2022 through 2026, including brackets, matchups, player runs, and standout performances.
                   </p>
                   <div className="flex flex-wrap gap-3 justify-center mt-4">
                     {SUGGESTIONS.map((s) => (
