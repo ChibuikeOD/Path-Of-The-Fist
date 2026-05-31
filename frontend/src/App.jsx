@@ -226,7 +226,7 @@ export default function App() {
   const hasMessages = messages.length > 0
 
   return (
-    <div className="flex-1 flex flex-col h-screen overflow-hidden relative font-body-md">
+    <div className="flex-1 flex flex-col h-dvh overflow-hidden relative font-body-md">
       {/* Ambient Effects */}
       <div className="fixed inset-0 pointer-events-none opacity-20 bg-speedlines z-0" />
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden" id="crackle-container">
@@ -274,19 +274,19 @@ export default function App() {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden relative z-10">
+      <main className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden relative z-10">
         <AdRail id={AD_UNITS.left} side="left" />
 
         {/* Center: Hype Chat Panel */}
-        <section className="flex-1 flex flex-col p-4 md:p-8 h-full overflow-hidden w-full max-w-5xl mx-auto">
+        <section className="flex-1 min-h-0 flex flex-col p-3 sm:p-4 md:p-8 h-full overflow-hidden w-full max-w-5xl mx-auto">
 
 
           {/* Chat Messages Area */}
-          <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-6 custom-scrollbar pb-6">
+          <div className="flex-1 min-h-0 overflow-y-auto pr-1 sm:pr-2 flex flex-col gap-4 md:gap-6 custom-scrollbar pb-4 md:pb-6">
             {/* Empty State / Welcome */}
             {!hasMessages && (
-              <div className="flex-1 flex flex-col items-center justify-center text-center p-6 bg-surface-container-high border-2 border-dashed border-outline-variant max-w-2xl mx-auto my-auto skew-x-[-6deg] flex-shrink-0">
-                <div className="skew-x-[6deg] flex flex-col items-center gap-4">
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-4 sm:p-6 bg-surface-container-high border-2 border-dashed border-outline-variant max-w-2xl mx-auto my-auto sm:skew-x-[-6deg] flex-shrink-0">
+                <div className="sm:skew-x-[6deg] flex flex-col items-center gap-4">
                   <span className="material-symbols-outlined text-primary-container text-5xl animate-bounce">
                     sports_kabaddi
                   </span>
@@ -315,7 +315,7 @@ export default function App() {
             {messages.map((msg, i) => (
               <div
                 key={msg.id || i}
-                className={`flex flex-col gap-1 max-w-[85%] relative ${
+                className={`flex flex-col gap-1 max-w-[94%] sm:max-w-[85%] relative ${
                   msg.role === 'user' ? 'items-end self-end' : 'items-start self-start mt-4'
                 }`}
               >
@@ -360,7 +360,7 @@ export default function App() {
                   className={`relative font-chat-msg text-chat-msg ${
                     msg.role === 'user'
                       ? 'p-4 bg-surface-bright text-on-surface border-2 border-primary-fixed user-bubble'
-                      : `p-5 pr-16 md:pr-24 bg-tertiary-container text-on-tertiary-container border-4 border-on-tertiary-container bot-bubble font-bold shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] ${
+                      : `p-4 md:p-5 pr-10 sm:pr-16 md:pr-24 bg-tertiary-container text-on-tertiary-container border-4 border-on-tertiary-container bot-bubble font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] md:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] ${
                           msg.pending ? 'animate-pulse' : ''
                         } ${msg.error ? 'border-error text-on-error bg-error-container' : ''}`
                   }`}
@@ -368,7 +368,7 @@ export default function App() {
                   {/* Comic Action Graphic */}
                   {msg.role !== 'user' && !msg.pending && !msg.error && (
                     <div
-                      className="absolute -top-6 -right-6 font-display-lg text-display-lg text-secondary-container stroke-black drop-shadow-[2px_2px_0_rgba(0,0,0,1)] rotate-12 z-20 pointer-events-none select-none"
+                      className="hidden sm:block absolute -top-6 -right-6 font-display-lg text-display-lg text-secondary-container stroke-black drop-shadow-[2px_2px_0_rgba(0,0,0,1)] rotate-12 z-20 pointer-events-none select-none"
                       style={{ WebkitTextStroke: '2px black' }}
                     >
                       {getComicWord(i)}
@@ -403,11 +403,11 @@ export default function App() {
           </div>
 
           {/* Chat Input */}
-          <div className="mt-auto pt-4 bg-background z-20 flex-shrink-0">
+          <div className="mt-auto pt-3 md:pt-4 bg-background z-20 flex-shrink-0">
             <div className="flex border-2 border-primary-container bg-surface focus-within:border-tertiary-container transition-colors p-1 skew-x-[-6deg]">
               <input
                 ref={inputRef}
-                className="flex-1 bg-transparent border-none text-on-surface focus:ring-0 font-label-caps text-label-caps placeholder-on-surface-variant px-4 skew-x-[6deg] focus:outline-none"
+                className="min-w-0 flex-1 bg-transparent border-none text-on-surface focus:ring-0 font-label-caps text-label-caps placeholder-on-surface-variant px-3 sm:px-4 skew-x-[6deg] focus:outline-none"
                 placeholder={loading ? 'COMMENTATING...' : 'ENTER THE ARENA...'}
                 type="text"
                 value={input}
@@ -417,7 +417,7 @@ export default function App() {
                 autoFocus
               />
               <button
-                className="bg-primary-container text-on-primary-container px-6 py-2 font-headline-lg-mobile text-headline-lg-mobile uppercase hover:bg-tertiary-container hover:text-on-tertiary-container transition-colors flex items-center justify-center skew-x-[6deg] -ml-2 border-l-2 border-background disabled:opacity-40 disabled:cursor-not-allowed font-bold"
+                className="bg-primary-container text-on-primary-container px-4 sm:px-6 py-2 font-headline-lg-mobile text-headline-lg-mobile uppercase hover:bg-tertiary-container hover:text-on-tertiary-container transition-colors flex items-center justify-center skew-x-[6deg] -ml-2 border-l-2 border-background disabled:opacity-40 disabled:cursor-not-allowed font-bold"
                 onClick={() => sendMessage()}
                 disabled={!input.trim() || loading}
               >
@@ -439,7 +439,7 @@ export default function App() {
 function AdRail({ id, side }) {
   return (
     <aside
-      className={`order-1 lg:order-none shrink-0 w-full lg:w-44 xl:w-56 p-3 md:p-4 lg:py-8 ${
+      className={`hidden lg:block order-1 lg:order-none shrink-0 w-full lg:w-44 xl:w-56 p-3 md:p-4 lg:py-8 ${
         side === 'left' ? 'lg:pl-6 lg:pr-2' : 'lg:pl-2 lg:pr-6'
       }`}
       aria-label={`${side} advertisement`}

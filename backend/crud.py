@@ -250,6 +250,33 @@ def sync_sets_from_startgg(event_id: int, sets_data: list):
                 MATCH (p2:Player {id: set_data.p2_id})
                 MERGE (s)-[:PLAYER1]->(p1)
                 MERGE (s)-[:PLAYER2]->(p2)
+                
+                // Create/Merge SetPlayer for Player 1
+                WITH s, set_data, p1, p2
+                MERGE (sp1:SetPlayer {id: toString(set_data.id) + "_" + toString(set_data.p1_id)})
+                SET sp1.slot = set_data.p1_slot,
+                    sp1.result = set_data.p1_result
+                MERGE (s)-[:HAS_ENTRY]->(sp1)
+                MERGE (sp1)-[:PLAYER]->(p1)
+                
+                // Create/Merge SetPlayer for Player 2
+                WITH s, set_data, p1, p2, sp1
+                MERGE (sp2:SetPlayer {id: toString(set_data.id) + "_" + toString(set_data.p2_id)})
+                SET sp2.slot = set_data.p2_slot,
+                    sp2.result = set_data.p2_result
+                MERGE (s)-[:HAS_ENTRY]->(sp2)
+                MERGE (sp2)-[:PLAYER]->(p2)
+                
+                // Link used characters
+                WITH set_data, sp1, sp2
+                FOREACH (char_id IN set_data.p1_chars |
+                    MERGE (c1:Character {id: char_id})
+                    MERGE (sp1)-[:USED_CHARACTER]->(c1)
+                )
+                FOREACH (char_id IN set_data.p2_chars |
+                    MERGE (c2:Character {id: char_id})
+                    MERGE (sp2)-[:USED_CHARACTER]->(c2)
+                )
                 """,
                 sets=[
                     {
@@ -258,6 +285,12 @@ def sync_sets_from_startgg(event_id: int, sets_data: list):
                         "p2_id": set_data.get("player2_id"),
                         "winner_id": set_data.get("winnerid"),
                         "completed_at": set_data.get("completed_at"),
+                        "p1_slot": set_data.get("p1_slot"),
+                        "p1_result": set_data.get("p1_result"),
+                        "p1_chars": set_data.get("p1_chars") or [],
+                        "p2_slot": set_data.get("p2_slot"),
+                        "p2_result": set_data.get("p2_result"),
+                        "p2_chars": set_data.get("p2_chars") or [],
                     }
                     for set_data in sets_data
                 ],
@@ -330,6 +363,20 @@ def fetch_event_sets_from_api(event_id: int, per_page: int = 100) -> dict:
                     id
                     gamerTag
                   }
+                }
+              }
+            }
+            games {
+              id
+              orderNum
+              winnerId
+              selections {
+                entrant {
+                  id
+                }
+                character {
+                  id
+                  name
                 }
               }
             }
@@ -439,6 +486,23 @@ def sync_tournament_from_startgg(tournament_slug: str, per_page: int = 100):
             unique_players[competitor_1["id"]] = competitor_1
             unique_players[competitor_2["id"]] = competitor_2
 
+            # Parse games and character selections
+            p1_chars = set()
+            p2_chars = set()
+            games = set_record.get("games") or []
+            for game in games:
+                selections = game.get("selections") or []
+                for sel in selections:
+                    entrant_info = sel.get("entrant") or {}
+                    entrant_id = entrant_info.get("id")
+                    char_info = sel.get("character") or {}
+                    char_id = char_info.get("id")
+                    if entrant_id is not None and char_id is not None:
+                        if entrant_1 and str(entrant_id) == str(entrant_1.get("id")):
+                            p1_chars.add(char_id)
+                        elif entrant_2 and str(entrant_id) == str(entrant_2.get("id")):
+                            p2_chars.add(char_id)
+
             raw_time = set_record.get("completedAt")
             completed_at = None
             if raw_time:
@@ -447,6 +511,16 @@ def sync_tournament_from_startgg(tournament_slug: str, per_page: int = 100):
                 except Exception:
                     completed_at = None
 
+            p1_result = "unknown"
+            p2_result = "unknown"
+            if resolved_winner_id is not None:
+                if resolved_winner_id == competitor_1["id"]:
+                    p1_result = "win"
+                    p2_result = "loss"
+                elif resolved_winner_id == competitor_2["id"]:
+                    p1_result = "loss"
+                    p2_result = "win"
+
             batch_sets.append(
                 {
                     "id": set_record["id"],
@@ -454,6 +528,12 @@ def sync_tournament_from_startgg(tournament_slug: str, per_page: int = 100):
                     "player2_id": competitor_2["id"],
                     "winnerid": resolved_winner_id,
                     "completed_at": completed_at,
+                    "p1_slot": 1,
+                    "p1_result": p1_result,
+                    "p1_chars": list(p1_chars),
+                    "p2_slot": 2,
+                    "p2_result": p2_result,
+                    "p2_chars": list(p2_chars),
                 }
             )
 
@@ -787,6 +867,31 @@ def create_set(set_data: SetCreate):
             MATCH (p2:Player {id: $p2_id})
             CREATE (s)-[:PLAYER1]->(p1)
             CREATE (s)-[:PLAYER2]->(p2)
+
+            // Create SetPlayer for Player 1
+            WITH s, p1, p2
+            MERGE (sp1:SetPlayer {id: toString($id) + "_" + toString($p1_id)})
+            SET sp1.slot = 1,
+                sp1.result = CASE 
+                  WHEN $winner_id IS NULL THEN "unknown"
+                  WHEN $winner_id = $p1_id THEN "win"
+                  ELSE "loss"
+                END
+            MERGE (s)-[:HAS_ENTRY]->(sp1)
+            MERGE (sp1)-[:PLAYER]->(p1)
+
+            // Create SetPlayer for Player 2
+            WITH s, p1, p2, sp1
+            MERGE (sp2:SetPlayer {id: toString($id) + "_" + toString($p2_id)})
+            SET sp2.slot = 2,
+                sp2.result = CASE 
+                  WHEN $winner_id IS NULL THEN "unknown"
+                  WHEN $winner_id = $p2_id THEN "win"
+                  ELSE "loss"
+                END
+            MERGE (s)-[:HAS_ENTRY]->(sp2)
+            MERGE (sp2)-[:PLAYER]->(p2)
+
             RETURN {
                 id: s.id,
                 player1_id: s.player1_id,
@@ -881,6 +986,15 @@ def update_set_winner(set_id: int, winner_id: int):
             """
             MATCH (s:Set {id: $set_id})
             SET s.winner_id = $winner_id, s.completed_at = $completed_at
+
+            WITH s
+            OPTIONAL MATCH (s)-[:HAS_ENTRY]->(sp:SetPlayer)-[:PLAYER]->(p:Player)
+            WHERE sp IS NOT NULL AND p IS NOT NULL
+            SET sp.result = CASE 
+              WHEN p.id = $winner_id THEN "win"
+              ELSE "loss"
+            END
+
             RETURN {
                 id: s.id,
                 player1_id: s.player1_id,

@@ -267,8 +267,59 @@ def is_character_question(query: str) -> bool:
     character_terms = {
         "character", "characters", "main", "mains", "picks", "pick", "played",
         "uses", "use", "selected", "selection", "prominent", "popular", "roster",
+        "performance", "perform", "performed", "best", "worst", "winrate", "win rate",
     }
     return any(re.search(rf"\b{re.escape(term)}\b", query_lower) for term in character_terms)
+
+
+def is_character_performance_question(query: str) -> bool:
+    """Detect questions asking for character results rather than roster availability."""
+    query_lower = query.lower()
+    performance_terms = {
+        "performance", "perform", "performed", "best", "worst", "strongest",
+        "weakest", "winrate", "win rate", "wins", "losses", "results",
+    }
+    character_terms = {"character", "characters", "main", "mains", "pick", "picks"}
+    has_performance = any(re.search(rf"\b{re.escape(term)}\b", query_lower) for term in performance_terms)
+    has_character = any(re.search(rf"\b{re.escape(term)}\b", query_lower) for term in character_terms)
+    return has_performance and (has_character or is_character_question(query))
+
+
+def detect_mentioned_characters(query: str) -> list[str]:
+    """Dynamically query Neo4j for character names matching clean words in query."""
+    words = [w.lower() for w in re.sub(r'[^a-zA-Z0-9\s]', ' ', query).split()]
+    filtered_keywords = [w for w in words if w not in _STOP_WORDS and len(w) >= 2]
+    if not filtered_keywords:
+        return []
+
+    try:
+        with driver.session() as session:
+            res = session.run(
+                """
+                MATCH (c:Character)
+                WHERE c.name IS NOT NULL AND any(kw IN $keywords WHERE toLower(c.name) CONTAINS kw)
+                RETURN DISTINCT c.name AS name
+                """,
+                keywords=filtered_keywords,
+            )
+            raw_matches = [r["name"] for r in res if r["name"]]
+
+        query_lower = query.lower()
+        mentioned = set()
+        for character in raw_matches:
+            character_lower = character.lower()
+            clean_character_words = re.sub(r'[^a-z0-9\s]', ' ', character_lower).split()
+            if character_lower in query_lower:
+                mentioned.add(character)
+                continue
+            for w in clean_character_words:
+                if len(w) >= 2 and w not in _STOP_WORDS and w in words:
+                    mentioned.add(character)
+                    break
+        return list(mentioned)
+    except Exception as e:
+        print(f"Error dynamically detecting characters: {e}")
+        return []
 
 
 def get_local_context(player_names: list[str]) -> str:
@@ -294,6 +345,13 @@ def get_local_context(player_names: list[str]) -> str:
     MATCH (s)-[:PLAYER2]->(p2:Player)
     MATCH (s)-[:PLAYED_IN]->(e:Event)
     OPTIONAL MATCH (winner:Player {id: s.winner_id})
+
+    // Fetch SetPlayer and character info
+    OPTIONAL MATCH (s)-[:HAS_ENTRY]->(sp1:SetPlayer)-[:PLAYER]->(p1)
+    OPTIONAL MATCH (sp1)-[:USED_CHARACTER]->(c1:Character)
+    OPTIONAL MATCH (s)-[:HAS_ENTRY]->(sp2:SetPlayer)-[:PLAYER]->(p2)
+    OPTIONAL MATCH (sp2)-[:USED_CHARACTER]->(c2:Character)
+
     RETURN p1.gamertag AS p1,
            coalesce(p1.rating, $default_rating) AS p1_rating,
            p2.gamertag AS p2,
@@ -301,7 +359,9 @@ def get_local_context(player_names: list[str]) -> str:
            coalesce(winner.gamertag, 'Unknown') AS winner,
            e.name AS event,
            e.tournament_name AS tournament,
-           s.completed_at AS completed_at
+           s.completed_at AS completed_at,
+           collect(DISTINCT c1.name) AS p1_chars,
+           collect(DISTINCT c2.name) AS p2_chars
     ORDER BY completed_at DESC
     LIMIT 25
     """
@@ -309,21 +369,16 @@ def get_local_context(player_names: list[str]) -> str:
     player_character_cypher = """
     MATCH (p:Player)
     WHERE p.gamertag IN $player_names
-    OPTIONAL MATCH (p)-[r]->(c:Character)
-    WITH p, r, c
-    WHERE r IS NULL OR type(r) IN [
-        'MAINS', 'PLAYS', 'USES_CHARACTER', 'USED_CHARACTER',
-        'PLAYED_CHARACTER', 'SELECTED_CHARACTER'
-    ]
+    OPTIONAL MATCH (sp:SetPlayer)-[:PLAYER]->(p)
+    OPTIONAL MATCH (sp)-[:USED_CHARACTER]->(c:Character)
+    WITH p, c, count(sp) AS set_count
+    WHERE c IS NOT NULL
     RETURN p.gamertag AS gamertag,
-           collect(DISTINCT CASE
-               WHEN c IS NULL THEN NULL
-               ELSE {
-                   character: c.name,
-                   videogame: c.videogame_name,
-                   relationship: type(r)
-               }
-           END) AS character_links
+           collect({
+               character: c.name,
+               videogame: c.videogame_name,
+               count: set_count
+           }) AS character_usage
     """
 
     try:
@@ -348,8 +403,10 @@ def get_local_context(player_names: list[str]) -> str:
             )
             sets_lines = []
             for record in sets_res:
+                p1_c = f" using {', '.join(record['p1_chars'])}" if record.get('p1_chars') else ""
+                p2_c = f" using {', '.join(record['p2_chars'])}" if record.get('p2_chars') else ""
                 line = (
-                    f"- {record['p1']} (Rating: {record['p1_rating']}) vs {record['p2']} (Rating: {record['p2_rating']}), "
+                    f"- {record['p1']}{p1_c} (Rating: {record['p1_rating']}) vs {record['p2']}{p2_c} (Rating: {record['p2_rating']}), "
                     f"winner: {record['winner']}, event: {record['event']} ({record['tournament']})."
                 )
                 sets_lines.append(line)
@@ -362,25 +419,22 @@ def get_local_context(player_names: list[str]) -> str:
 
             character_res = session.run(player_character_cypher, player_names=player_names)
             context_lines.append("### Player Character Data")
-            found_character_links = False
+            found_character_usage = False
             for record in character_res:
-                links = [link for link in (record["character_links"] or []) if link]
-                if links:
-                    found_character_links = True
-                    for link in links:
+                usage = [u for u in (record.get("character_usage") or []) if u and u.get("character")]
+                if usage:
+                    found_character_usage = True
+                    for u in usage:
                         context_lines.append(
-                            f"* {record['gamertag']} {link['relationship']} "
-                            f"{link['character']} ({link['videogame']})."
+                            f"* {record['gamertag']} used {u['character']} ({u['videogame']}) in {u['count']} set(s)."
                         )
                 else:
                     context_lines.append(
-                        f"* No explicit main/pick/selection relationship is stored for {record['gamertag']}."
+                        f"* No set-level character selections were recorded for {record['gamertag']}."
                     )
-            if not found_character_links:
+            if not found_character_usage:
                 context_lines.append(
-                    "* The current graph has playable character rosters by event, but it does not store "
-                    "per-player mains or per-set character selections unless an explicit Player->Character "
-                    "relationship is added."
+                    "* The graph contains character rosters, but no dynamic character selections have been synchronized for these players."
                 )
     except Exception as exc:
         print(f"Neo4j query failed ({exc}); using fallback local context.")
@@ -440,9 +494,8 @@ def get_character_context(event_names: list[str] = None, years: list[str] = None
 
     lines = [
         "### Character Data",
-        "* Character nodes currently represent playable roster availability per event.",
+        "* Character nodes represent playable roster availability per event and dynamic usage in tournament sets.",
         "* Prominence metric available in this graph: number of matched events where the character is playable.",
-        "* The graph does not currently store per-set character picks or player mains unless an explicit Player->Character relationship exists.",
         "#### Most Prominent Characters By Roster Availability",
     ]
     for idx, row in enumerate(rows, 1):
@@ -456,7 +509,82 @@ def get_character_context(event_names: list[str] = None, years: list[str] = None
     return "\n".join(lines)
 
 
-def get_global_context(event_names: list[str] = None, years: list[str] = None, include_characters: bool = False) -> str:
+def get_character_performance_context(
+    event_names: list[str] = None,
+    years: list[str] = None,
+    character_names: list[str] = None,
+) -> str:
+    """Retrieve character performance metrics directly from SetPlayer character usage."""
+    conditions = []
+    params = {}
+    if event_names:
+        conditions.append("e.name IN $event_names")
+        params["event_names"] = event_names
+    if years:
+        conditions.append("any(yr IN $years WHERE e.tournament_name CONTAINS yr)")
+        params["years"] = years
+    if character_names:
+        conditions.append("c.name IN $character_names")
+        params["character_names"] = character_names
+
+    where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+    cypher = f"""
+    MATCH (c:Character)<-[:USED_CHARACTER]-(sp:SetPlayer)<-[:HAS_ENTRY]-(s:Set)
+    MATCH (s)-[:PLAYED_IN]->(e:Event)
+    MATCH (sp)-[:PLAYER]->(p:Player)
+    {where_clause}
+    WITH c, sp, s, p
+    RETURN c.name AS character,
+           c.videogame_name AS videogame,
+           count(DISTINCT s) AS sets,
+           sum(CASE WHEN sp.result = 'win' THEN 1 ELSE 0 END) AS wins,
+           count(DISTINCT p) AS unique_players,
+           collect(DISTINCT p.gamertag)[0..8] AS sample_players
+    ORDER BY wins DESC, sets DESC, character ASC
+    LIMIT 25
+    """
+
+    try:
+        with driver.session() as session:
+            rows = session.run(cypher, **params).data()
+    except Exception as exc:
+        print(f"Neo4j character performance query failed ({exc}); omitting performance context.")
+        return ""
+
+    lines = [
+        "### Character Performance Data",
+        "* Character performance is dynamically computed from set-level character choices recorded in the database.",
+    ]
+
+    if not rows:
+        lines.extend([
+            "* No character performance rows matched the current graph and filters.",
+            "* The current Combo Breaker graph has character roster availability, but no character choices have been sync'd or reported for these matches.",
+        ])
+        return "\n".join(lines)
+
+    lines.append("#### Character Results From Set-level Match Data")
+    for idx, row in enumerate(rows, 1):
+        sets = row["sets"] or 0
+        wins = row["wins"] or 0
+        win_rate = (wins / sets * 100) if sets else 0
+        players = ", ".join(row["sample_players"] or [])
+        lines.append(
+            f"{idx}. {row['character']} ({row['videogame']}) - {wins}/{sets} set wins "
+            f"({win_rate:.1f}%); unique players: {row['unique_players']}; sample players: {players}"
+        )
+
+    return "\n".join(lines)
+
+
+def get_global_context(
+    event_names: list[str] = None,
+    years: list[str] = None,
+    include_characters: bool = False,
+    include_character_performance: bool = False,
+    character_names: list[str] = None,
+) -> str:
     """Retrieves event summaries, filtering by matched names/years or limiting default ones to save tokens."""
     t0 = time.time()
     _agent_log("neo4j_global_context_start", {"events": event_names, "years": years}, "A_global")
@@ -507,6 +635,15 @@ def get_global_context(event_names: list[str] = None, years: list[str] = None, i
     if not context_lines:
         print("No event summaries found in Neo4j; using fallback/demo tournament context.")
         context_lines.append(_load_demo_context())
+
+    if include_character_performance:
+        performance_context = get_character_performance_context(
+            event_names=event_names,
+            years=years,
+            character_names=character_names,
+        )
+        if performance_context:
+            context_lines.append(performance_context)
 
     if include_characters:
         character_context = get_character_context(event_names=event_names, years=years)
@@ -577,12 +714,24 @@ def build_rag_context(question: str) -> tuple[str, str]:
     mentioned_players = detect_mentioned_players(question)
     mentioned_events = detect_mentioned_events(question)
     mentioned_years = detect_mentioned_years(question)
+    mentioned_characters = detect_mentioned_characters(question)
     include_characters = is_character_question(question)
+    include_character_performance = is_character_performance_question(question)
+    if include_character_performance and mentioned_characters:
+        mentioned_players = []
 
     if mentioned_players:
         print(f"Routing to Local Search (Players detected: {mentioned_players})")
         _agent_log("routing_local", {"detected_players": mentioned_players, "question": question}, "routing")
         tournament_data = get_local_context(mentioned_players)
+        if include_character_performance:
+            performance_context = get_character_performance_context(
+                event_names=mentioned_events,
+                years=mentioned_years,
+                character_names=mentioned_characters,
+            )
+            if performance_context:
+                tournament_data = f"{tournament_data}\n\n{performance_context}" if tournament_data else performance_context
         if include_characters and (mentioned_events or mentioned_years):
             character_context = get_character_context(event_names=mentioned_events, years=mentioned_years)
             if character_context:
@@ -598,6 +747,8 @@ def build_rag_context(question: str) -> tuple[str, str]:
             event_names=mentioned_events,
             years=mentioned_years,
             include_characters=include_characters,
+            include_character_performance=include_character_performance,
+            character_names=mentioned_characters,
         )
 
     # Prepend database metadata so the model always knows which tournaments/games are available
@@ -613,9 +764,10 @@ You are the Voice of Combo Breaker (covering 2022 - 2026)—a high-energy, elite
 1. Hype Dial: Use high-energy verbs (Ascended, Dismantled, Clutched, Decimated) and stage atmosphere details.
 2. Data Integrity: You are strictly forbidden from inventing winners.
 3. Elo Ratings: Highlight rivalries between similarly rated players. Crucially, you must ONLY identify a match as an upset when the data explicitly shows a lower-rated player defeating a higher-rated player.
-4. Character Data: Character nodes represent playable rosters for an event/game. Treat "most prominent character" as roster availability across the matched events unless the context explicitly provides usage, pick, or main data.
-5. Player Mains: Do not infer a player's main from general knowledge, popularity, nationality, team, match wins, or roster availability. Only answer player-main or character-pick questions when the context includes an explicit Player->Character relationship or set-level character selection. If that data is absent, say the graph does not currently store that information.
-6. Output: Do not show analysis steps, just provide the hype narrative output. Do not use markdown bold (**) in the output.
+4. Character Data: Character nodes represent playable rosters for an event/game. Treat "most prominent character" as roster availability across the matched events unless the context explicitly provides usage, pick, main, or performance data.
+5. Character Performance: Only discuss character performance, win rates, strongest characters, or weakest characters from the "Character Performance Data" section. If that section says no performance rows exist, clearly say the current graph cannot measure character performance yet because player-character or set-level pick data is missing.
+6. Player Mains: Do not infer a player's main from general knowledge, popularity, nationality, team, match wins, or roster availability. Only answer player-main or character-pick questions when the context includes an explicit Player->Character relationship or set-level character selection. If that data is absent, say the graph does not currently store that information.
+7. Output: Do not show analysis steps, just provide the hype narrative output. Do not use markdown bold (**) in the output.
 """
     return tournament_data, system_message
 
