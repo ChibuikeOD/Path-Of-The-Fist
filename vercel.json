@@ -28,6 +28,10 @@
       "dest": "https://path-of-the-fist.onrender.com/players/$1"
     },
     {
+      "src": "/characters/(.*)",
+      "dest": "https://path-of-the-fist.onrender.com/characters/$1"
+    },
+    {
       "src": "/sets/(.*)",
       "dest": "https://path-of-the-fist.onrender.com/sets/$1"
     },

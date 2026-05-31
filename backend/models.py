@@ -31,6 +31,25 @@ class Player:
         )
 
 
+# ==================== Character Node ====================
+class Character:
+    """Playable character node in Neo4j"""
+    def __init__(self, id: int, name: str, videogame_id: int = None, videogame_name: str = None):
+        self.id = id
+        self.name = name
+        self.videogame_id = videogame_id
+        self.videogame_name = videogame_name
+
+    @staticmethod
+    def from_dict(data: dict):
+        return Character(
+            data.get('id'),
+            data.get('name'),
+            data.get('videogame_id'),
+            data.get('videogame_name')
+        )
+
+
 # ==================== Set Node ====================
 class Set:
     """Set (match) node in Neo4j"""
@@ -60,3 +79,4 @@ class Set:
 # PLAYED_IN: Set -> Event
 # PLAYER1: Set -> Player
 # PLAYER2: Set -> Player
+# PLAYABLE_IN: Character -> Event

@@ -3,7 +3,7 @@ from time import sleep
 from datetime import datetime, timezone
 from typing import Optional, Sequence
 from database import get_session, reset_driver
-from schemas import EventCreate, PlayerCreate, SetCreate
+from schemas import EventCreate, PlayerCreate, SetCreate, CharacterCreate
 from constants import DEFAULT_ELO_RATING
 import logging
 import os
@@ -185,6 +185,43 @@ def sync_players_from_startgg(event_id: int, players_data: list):
         return 0, len(players_data)
 
 
+def sync_characters_from_startgg(event_id: int, characters_data: list):
+    """Bulk insert/update playable characters for an event."""
+    if not characters_data:
+        return 0, 0
+
+    def _write():
+        session = get_session()
+        try:
+            session.run(
+                """
+                UNWIND $characters AS character_data
+                MERGE (c:Character {id: character_data.id})
+                SET c.name = character_data.name,
+                    c.videogame_id = character_data.videogame_id,
+                    c.videogame_name = character_data.videogame_name,
+                    c.source = 'startgg'
+                WITH collect(c) AS characters
+                MATCH (e:Event {id: $event_id})
+                UNWIND characters AS c
+                MERGE (c)-[:PLAYABLE_IN]->(e)
+                """,
+                characters=characters_data,
+                event_id=event_id,
+            )
+            return len(characters_data), 0
+        finally:
+            session.close()
+
+    try:
+        created_count, skipped_count = _run_with_driver_retry(f"characters for event {event_id}", _write)
+        logger.info(f"Synced characters: {created_count} upserted, {skipped_count} skipped")
+        return created_count, skipped_count
+    except Exception as e:
+        logger.error(f"Error syncing character batch for event {event_id}: {e}")
+        return 0, len(characters_data)
+
+
 def sync_sets_from_startgg(event_id: int, sets_data: list):
     """Bulk insert/update sets for an event."""
     if not sets_data:
@@ -252,6 +289,10 @@ def fetch_tournament_events_from_api(tournament_slug: str) -> dict:
           videogame {
             id
             name
+            characters {
+              id
+              name
+            }
           }
         }
       }
@@ -323,13 +364,17 @@ def sync_tournament_from_startgg(tournament_slug: str, per_page: int = 100):
     synced_events = 0
     synced_players = 0
     synced_sets = 0
+    synced_characters = 0
     skipped_players = 0
     skipped_sets = 0
+    skipped_characters = 0
 
     for event in tournament.get("events") or []:
         event_id = event["id"]
         event_name = event["name"]
-        videogame_name = (event.get("videogame") or {}).get("name")
+        videogame = event.get("videogame") or {}
+        videogame_id = videogame.get("id")
+        videogame_name = videogame.get("name")
 
         logger.info(
             "Syncing event %s (%s) from %s",
@@ -344,6 +389,21 @@ def sync_tournament_from_startgg(tournament_slug: str, per_page: int = 100):
             tournament_name=tournament_name,
             videogame_name=videogame_name,
         )
+
+        characters_list = [
+            {
+                "id": character["id"],
+                "name": character["name"],
+                "videogame_id": videogame_id,
+                "videogame_name": videogame_name,
+            }
+            for character in videogame.get("characters") or []
+            if character.get("id") is not None and character.get("name")
+        ]
+        if characters_list:
+            created_characters, skipped_character_count = sync_characters_from_startgg(event_id, characters_list)
+            synced_characters += created_characters
+            skipped_characters += skipped_character_count
 
         try:
             event_payload = fetch_event_sets_from_api(event_id, per_page=per_page)
@@ -412,13 +472,15 @@ def sync_tournament_from_startgg(tournament_slug: str, per_page: int = 100):
         sleep(0.5)
 
     logger.info(
-        "Sync complete for %s: events=%s players=%s sets=%s skipped_players=%s skipped_sets=%s",
+        "Sync complete for %s: events=%s players=%s sets=%s characters=%s skipped_players=%s skipped_sets=%s skipped_characters=%s",
         tournament_slug,
         synced_events,
         synced_players,
         synced_sets,
+        synced_characters,
         skipped_players,
         skipped_sets,
+        skipped_characters,
     )
     return {
         "tournament_slug": tournament_slug,
@@ -426,8 +488,10 @@ def sync_tournament_from_startgg(tournament_slug: str, per_page: int = 100):
         "events_synced": synced_events,
         "players_synced": synced_players,
         "sets_synced": synced_sets,
+        "characters_synced": synced_characters,
         "skipped_players": skipped_players,
         "skipped_sets": skipped_sets,
+        "skipped_characters": skipped_characters,
     }
 
 
@@ -570,6 +634,112 @@ def get_all_players():
     players = [record["player"] for record in result]
     session.close()
     return players
+
+
+# ==================== CHARACTER CRUD ====================
+
+def create_character(character: CharacterCreate):
+    """Create a new playable character."""
+    try:
+        session = get_session()
+        result = session.run(
+            """
+            MERGE (c:Character {id: $id})
+            SET c.name = $name,
+                c.videogame_id = $videogame_id,
+                c.videogame_name = $videogame_name
+            RETURN {
+                id: c.id,
+                name: c.name,
+                videogame_id: c.videogame_id,
+                videogame_name: c.videogame_name
+            } AS character
+            """,
+            id=character.id,
+            name=character.name,
+            videogame_id=character.videogame_id,
+            videogame_name=character.videogame_name,
+        )
+        record = result.single()
+
+        if character.eventid:
+            session.run(
+                """
+                MATCH (c:Character {id: $character_id})
+                MATCH (e:Event {id: $event_id})
+                MERGE (c)-[:PLAYABLE_IN]->(e)
+                """,
+                character_id=character.id,
+                event_id=character.eventid,
+            )
+
+        session.close()
+        logger.info(f"Created character: {character.id} - {character.name}")
+        return record["character"] if record else None
+    except Exception as e:
+        logger.warning(f"Character {character.id} may already exist: {e}")
+        return get_character(character.id)
+
+
+def get_character(character_id: int):
+    """Get a single character by ID."""
+    session = get_session()
+    result = session.run(
+        """
+        MATCH (c:Character {id: $id})
+        RETURN {
+            id: c.id,
+            name: c.name,
+            videogame_id: c.videogame_id,
+            videogame_name: c.videogame_name
+        } AS character
+        """,
+        id=character_id,
+    )
+    record = result.single()
+    session.close()
+    return record["character"] if record else None
+
+
+def get_characters_by_event(event_id: int):
+    """Get all playable characters for a specific event."""
+    session = get_session()
+    result = session.run(
+        """
+        MATCH (c:Character)-[:PLAYABLE_IN]->(e:Event {id: $event_id})
+        RETURN {
+            id: c.id,
+            name: c.name,
+            videogame_id: c.videogame_id,
+            videogame_name: c.videogame_name
+        } AS character
+        ORDER BY character.name
+        """,
+        event_id=event_id,
+    )
+    characters = [record["character"] for record in result]
+    session.close()
+    return characters
+
+
+def get_all_characters():
+    """Get all playable characters."""
+    session = get_session()
+    result = session.run(
+        """
+        MATCH (c:Character)
+        RETURN {
+            id: c.id,
+            name: c.name,
+            videogame_id: c.videogame_id,
+            videogame_name: c.videogame_name
+        } AS character
+        ORDER BY character.videogame_name, character.name
+        """
+    )
+    characters = [record["character"] for record in result]
+    session.close()
+    return characters
 
 
 def update_player_rating(player_id: int, new_rating: int):

@@ -55,6 +55,26 @@ class PlayerWithEvent(PlayerResponse):
         from_attributes = True
 
 
+# ==================== Character Schemas ====================
+
+class CharacterBase(BaseModel):
+    name: str
+    videogame_id: Optional[int] = None
+    videogame_name: Optional[str] = None
+    eventid: Optional[int] = None
+
+
+class CharacterCreate(CharacterBase):
+    id: int
+
+
+class CharacterResponse(CharacterBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
 # ==================== Set Schemas ====================
 
 class SetBase(BaseModel):

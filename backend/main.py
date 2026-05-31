@@ -20,6 +20,7 @@ from database import close_driver
 from schemas import (
     EventCreate, EventResponse, EventWithRelations,
     PlayerCreate, PlayerResponse, PlayerWithEvent,
+    CharacterCreate, CharacterResponse,
     SetCreate, SetResponse, SetWithPlayers, SetUpdate
 )
 
@@ -155,6 +156,42 @@ async def get_player_wins(player_id: int):
     """Get all sets won by a player"""
     sets = crud.get_player_wins(player_id)
     return sets
+
+
+# ==================== CHARACTERS ENDPOINTS ====================
+
+@app.get("/characters/", response_model=List[CharacterResponse], tags=["Characters"])
+async def list_characters():
+    """Get all playable characters"""
+    characters = crud.get_all_characters()
+    return characters
+
+
+@app.get("/characters/{character_id}", response_model=CharacterResponse, tags=["Characters"])
+async def get_character(character_id: int):
+    """Get a single playable character"""
+    character = crud.get_character(character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    return character
+
+
+@app.get("/characters/event/{event_id}", response_model=List[CharacterResponse], tags=["Characters"])
+async def get_characters_by_event(event_id: int):
+    """Get all playable characters for an event"""
+    characters = crud.get_characters_by_event(event_id)
+    return characters
+
+
+@app.post("/characters/", response_model=CharacterResponse, status_code=status.HTTP_201_CREATED, tags=["Characters"])
+async def create_character(character: CharacterCreate):
+    """Create a new playable character"""
+    try:
+        db_character = crud.create_character(character)
+        return db_character
+    except Exception as e:
+        logger.error(f"Error creating character: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ==================== SETS ENDPOINTS ====================
