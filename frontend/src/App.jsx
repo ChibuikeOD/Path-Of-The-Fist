@@ -322,7 +322,7 @@ export default function App() {
                   {msg.role === 'user' ? (
                     <>
                       <span className="font-label-caps text-label-caps text-primary-fixed">
-                        P1_CHALLENGER
+                        YOU
                       </span>
                       <div className="w-6 h-6 rounded-sm bg-surface-variant overflow-hidden border border-outline flex items-center justify-center">
                         <span className="material-symbols-outlined text-sm text-outline-variant">
@@ -341,7 +341,7 @@ export default function App() {
                         </span>
                       </div>
                       <span className="font-label-caps text-label-caps text-tertiary-container bg-on-tertiary-container px-2 py-0.5">
-                        FIST BOT [AI]
+                        FIST BOT
                       </span>
                       {msg.latency && (
                         <span className="font-label-caps text-[10px] text-outline-variant bg-surface-container-low px-2 py-0.5 flex items-center gap-1 border border-outline-variant">
