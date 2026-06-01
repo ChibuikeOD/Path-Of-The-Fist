@@ -53,47 +53,7 @@ DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.co
 DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-pro").strip()
 CHAT_PROVIDER = os.environ.get("CHAT_PROVIDER", "deepseek").strip().lower()
 
-_DEMO_CONTEXT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo_tournament_context.txt")
-
-
-def _load_demo_context() -> str:
-    with open(_DEMO_CONTEXT_PATH, encoding="utf-8") as f:
-        return f.read().strip()
-
-
-_DEMO_ANSWERS = {
-    "who won the street fighter 6 bracket": (
-        "LADIES AND GENTLEMEN — DRX|Leshar HAS ASCENDED! After dropping into losers early, "
-        "he carved through the bracket like a blade through silk and RESET THE GRAND FINALS, "
-        "then closed it out 3-2 over DFM|Itabashi Zangief to claim Combo Breaker 2025 Street Fighter 6!"
-    ),
-    "were there any upsets": (
-        "THE CROWD IS STILL BUZZING! Dual Kevin just authored a signature upset — "
-        "the lower-rated Rashid specialist sent the heavy favorite WBG|MenaRD packing 2-1 in top 48. "
-        "And don't sleep on DRX|Leshar's entire losers-run miracle: every set after that early drop was pure chaos!"
-    ),
-    "who had the most wins": (
-        "When you survive losers and win TWO grand-final sets, you don't just rack wins — you build a LEGEND. "
-        "DRX|Leshar stacked the most victories on the road to the trophy, grinding through Dual Kevin, "
-        "EndingWalker, Bonchan, GO1, and Itabashi Zangief before hoisting the belt!"
-    ),
-    "tell me about the grand finals": (
-        "GRAND FINALS ELECTRICITY! DFM|Itabashi Zangief struck first and took the opening set 3-0 — "
-        "the Zangief train looked unstoppable under the lights. But Leshar answered in the reset, "
-        "clutching a razor-thin 3-2 in the bracket reset match to etch his name into Combo Breaker history!"
-    ),
-}
-
-
-def _demo_answer(question: str, tournament_data: str, system_message: str) -> tuple[str, str, str]:
-    key = question.strip().lower().rstrip("?")
-    text = _DEMO_ANSWERS.get(key)
-    if not text:
-        text = (
-            "The monitors are still glowing with Combo Breaker 2025 data — ask me about bracket results, "
-            "upsets, win counts, or that heart-stopping grand finals reset!"
-        )
-    return text, tournament_data, system_message
+# Demo/mock system variables and functions removed for production.
 
 
 def _json_line(event_type: str, **payload) -> str:
@@ -334,6 +294,8 @@ def get_local_context(player_names: list[str]) -> str:
     OPTIONAL MATCH (p)-[:PARTICIPATED_IN]->(e:Event)
     RETURN p.gamertag AS gamertag,
            coalesce(p.rating, $default_rating) AS rating,
+           coalesce(p.wins, 0) AS wins,
+           coalesce(p.losses, 0) AS losses,
            collect(DISTINCT e.tournament_name + ' ' + e.name) AS events
     """
 
@@ -393,6 +355,7 @@ def get_local_context(player_names: list[str]) -> str:
                 context_lines.append(
                     f"### Player Profile: {record['gamertag']}\n"
                     f"* **Rating**: {record['rating']}\n"
+                    f"* **Record**: {record['wins']} Wins - {record['losses']} Losses\n"
                     f"* **Events Participated**: {events_str}\n"
                 )
 
@@ -607,10 +570,10 @@ def get_global_context(
         RETURN e.tournament_name AS tournament, e.summary AS summary
         """
     else:
-        # Default: limit to top 8 events by player count from COMBO BREAKER 2025
+        # Default: limit to top 8 events by player count from COMBO BREAKER tournaments (any year)
         cypher = """
         MATCH (e:Event)
-        WHERE e.tournament_name = 'COMBO BREAKER 2025' AND e.summary IS NOT NULL
+        WHERE e.tournament_name STARTS WITH 'COMBO BREAKER' AND e.summary IS NOT NULL
         OPTIONAL MATCH (p:Player)-[:PARTICIPATED_IN]->(e)
         WITH e, count(p) AS player_count
         RETURN e.tournament_name AS tournament, e.summary AS summary
@@ -628,13 +591,47 @@ def get_global_context(
                 # Prepend tournament info to the summary
                 context_lines.append(f"## TOURNAMENT: {tourney}\n{summary}")
     except Exception as exc:
-        print(f"Neo4j query failed ({exc}); using fallback/demo tournament context.")
+        print(f"Neo4j query failed ({exc}); returning empty context.")
         _agent_log("neo4j_global_context_fallback", {"error": str(exc)}, "A_global")
-        return _load_demo_context()
+        return ""
 
     if not context_lines:
-        print("No event summaries found in Neo4j; using fallback/demo tournament context.")
-        context_lines.append(_load_demo_context())
+        print("No event summaries found in Neo4j.")
+
+    # Fetch top players by wins for the specific events/years
+    if event_names or years:
+        conditions_wins = []
+        params_wins = {}
+        if event_names:
+            conditions_wins.append("e.name IN $event_names")
+            params_wins["event_names"] = event_names
+        if years:
+            conditions_wins.append("any(yr IN $years WHERE e.tournament_name CONTAINS yr)")
+            params_wins["years"] = years
+
+        where_clause = "WHERE " + " AND ".join(conditions_wins) if conditions_wins else ""
+        cypher_wins = f"""
+        MATCH (s:Set)-[:PLAYED_IN]->(e:Event)
+        {where_clause}
+        MATCH (s)-[:PLAYER1|PLAYER2]->(p:Player)
+        WHERE s.winner_id = p.id
+        RETURN p.gamertag AS name, count(s) AS wins
+        ORDER BY wins DESC
+        LIMIT 10
+        """
+        try:
+            with driver.session() as session:
+                wins_res = session.run(cypher_wins, **params_wins)
+                filtered_wins = [f"{r['name']} ({r['wins']} wins)" for r in wins_res]
+                if filtered_wins:
+                    years_str = f" for {', '.join(years)}" if years else ""
+                    events_str = f" in {', '.join(event_names)}" if event_names else ""
+                    context_lines.append(
+                        f"### Top Players by Wins{years_str}{events_str}\n"
+                        f"* {', '.join(filtered_wins)}"
+                    )
+        except Exception as exc:
+            print(f"Neo4j wins query failed ({exc}); omitting filtered wins from context.")
 
     if include_character_performance:
         performance_context = get_character_performance_context(
@@ -666,6 +663,10 @@ def get_tournament_context():
 
 _DATABASE_METADATA_CACHE = None
 
+def clear_database_metadata_cache():
+    global _DATABASE_METADATA_CACHE
+    _DATABASE_METADATA_CACHE = None
+
 def get_database_metadata() -> str:
     global _DATABASE_METADATA_CACHE
     if _DATABASE_METADATA_CACHE is not None:
@@ -693,14 +694,43 @@ def get_database_metadata() -> str:
                 f"{r['game']} ({r['characters']} characters)"
                 for r in character_games_res
             ]
+
+            # Fetch top 10 players by wins (Global)
+            wins_res = session.run(
+                """
+                MATCH (p:Player)
+                WHERE p.wins IS NOT NULL AND p.wins > 0
+                RETURN p.gamertag AS name, p.wins AS wins, coalesce(p.losses, 0) AS losses
+                ORDER BY wins DESC
+                LIMIT 10
+                """
+            )
+            top_wins = [f"{r['name']} ({r['wins']}W-{r['losses']}L)" for r in wins_res]
+
+            # Fetch top 10 players by rating (Global)
+            ratings_res = session.run(
+                """
+                MATCH (p:Player)
+                WHERE p.rating IS NOT NULL
+                RETURN p.gamertag AS name, p.rating AS rating
+                ORDER BY rating DESC
+                LIMIT 10
+                """
+            )
+            top_ratings = [f"{r['name']} (Rating: {r['rating']})" for r in ratings_res]
         
         metadata_lines = [
             "### DATABASE METADATA",
             f"* **Available Tournaments**: {', '.join(tourneys)}",
             f"* **Available Games**: {', '.join(games)}",
             f"* **Games With Character Rosters**: {', '.join(character_games)}",
-            ""
         ]
+        if top_wins:
+            metadata_lines.append(f"* **Top 10 Players by Wins (Global)**: {', '.join(top_wins)}")
+        if top_ratings:
+            metadata_lines.append(f"* **Top 10 Highest Rated Players (Global)**: {', '.join(top_ratings)}")
+        metadata_lines.append("")
+
         _DATABASE_METADATA_CACHE = "\n".join(metadata_lines)
     except Exception as e:
         print(f"Error fetching database metadata: {e}")

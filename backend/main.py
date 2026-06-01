@@ -260,6 +260,11 @@ async def sync_startgg_data(req: Optional[SyncStartGGRequest] = None):
             summarizer.run_summarizer()
         except Exception as sum_err:
             logger.error(f"Failed to run summarizer after sync: {sum_err}")
+        try:
+            logger.info("Clearing database metadata cache...")
+            clear_database_metadata_cache()
+        except Exception as cache_err:
+            logger.error(f"Failed to clear metadata cache: {cache_err}")
         return {
             "status": "success",
             "message": "Sync completed successfully",
@@ -272,7 +277,7 @@ async def sync_startgg_data(req: Optional[SyncStartGGRequest] = None):
 
 # ==================== CHAT (GraphRAG) ====================
 
-from graphRAG import generate_answer, generate_answer_stream
+from graphRAG import generate_answer, generate_answer_stream, clear_database_metadata_cache
 
 
 class ChatRequest(BaseModel):

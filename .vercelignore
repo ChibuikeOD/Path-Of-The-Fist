@@ -1,0 +1,14 @@
+.venv/
+backend/.venv/
+node_modules/
+frontend/node_modules/
+__pycache__/
+*.mp4
+*.pdf
+.git/
+.vercel/
+.cursor/
+debug-*.log
+test.json
+scratch/
+Text to PostgREST/

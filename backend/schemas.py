@@ -35,10 +35,13 @@ class EventWithRelations(EventResponse):
 class PlayerBase(BaseModel):
     gamertag: str
     rating: Optional[int] = DEFAULT_ELO_RATING
+    wins: Optional[int] = 0
+    losses: Optional[int] = 0
 
 
 class PlayerCreate(PlayerBase):
     id: int
+    eventid: Optional[int] = None
 
 
 class PlayerResponse(PlayerBase):

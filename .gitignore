@@ -14,3 +14,11 @@ Text to PostgREST/outputs/
 Text to PostgREST/supabase_postgrest_model/
 Text to PostgREST/supabase_python_model/
 *.log
+scratch/
+capture_screenshots.py
+screenshots/
+Text to PostgREST/dataset.jsonl
+Text to PostgREST/supabase_python_basics.jsonl
+Text to PostgREST/supabase_python_basics_500.jsonl
+docker-compose.yml
+generate_project_report.py

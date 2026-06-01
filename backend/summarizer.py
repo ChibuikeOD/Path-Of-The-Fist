@@ -129,6 +129,23 @@ def run_summarizer():
             )
             logger.info(f"Summary written for event: {event_name}")
 
+        # 9. Update win and loss tallies for all players
+        logger.info("Updating win and loss tallies for all players in Neo4j...")
+        session.run(
+            """
+            MATCH (p:Player)
+            SET p.wins = 0, p.losses = 0
+            WITH p
+            MATCH (s:Set)-[:PLAYER1|PLAYER2]->(p)
+            WHERE s.winner_id IS NOT NULL
+            WITH p, 
+                 sum(CASE WHEN s.winner_id = p.id THEN 1 ELSE 0 END) AS wins,
+                 sum(CASE WHEN s.winner_id <> p.id THEN 1 ELSE 0 END) AS losses
+            SET p.wins = wins, p.losses = losses
+            """
+        )
+        logger.info("Player win/loss tallies updated successfully!")
+
     except Exception as e:
         logger.error(f"Error generating event summaries: {e}")
     finally:

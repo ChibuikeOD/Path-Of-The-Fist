@@ -26,8 +26,24 @@ export default function App() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [crackles, setCrackles] = useState([])
+  const [isMobile, setIsMobile] = useState(false)
+  const [showMobileWelcome, setShowMobileWelcome] = useState(false)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
+
+  // Detect mobile view and check if welcome popup should be shown
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 768
+      setIsMobile(mobile)
+      if (mobile && !sessionStorage.getItem('fist_mobile_welcome_dismissed')) {
+        setShowMobileWelcome(true)
+      }
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
   // Generate background Kirby Crackle dots on mount
   useEffect(() => {
@@ -245,6 +261,21 @@ export default function App() {
         ))}
       </div>
 
+      {/* Mobile Navigation Container (Mobile Only) */}
+      <header className="flex md:hidden justify-between items-center w-full px-4 py-3 z-50 overflow-hidden border-b-2 border-primary-container bg-background">
+        <h1 className="font-display-lg text-xl text-primary-container italic skew-x-[-12deg] tracking-wider uppercase font-bold">
+          PATH OF THE FIST
+        </h1>
+        <button
+          onClick={() => setShowMobileWelcome(true)}
+          className="p-1.5 hover:bg-primary-container hover:text-on-primary-container transition-colors skew-x-[-12deg] border border-primary-container flex items-center justify-center"
+        >
+          <span className="material-symbols-outlined text-primary-container hover:text-on-primary-container text-lg font-bold">
+            help
+          </span>
+        </button>
+      </header>
+
       {/* Top Navigation Container (Desktop) / Header */}
       <header className="hidden md:flex justify-between items-center w-full px-margin-desktop py-4 z-50 overflow-hidden border-b-4 border-primary-container bg-background">
         <div className="flex items-center gap-8">
@@ -432,6 +463,140 @@ export default function App() {
 
         <AdRail id={AD_UNITS.right} side="right" />
       </main>
+
+      {/* Mobile Welcome Popup (Overlay) */}
+      {showMobileWelcome && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 p-4 sm:p-6 overflow-y-auto">
+          {/* Halftone / speedline effects inside popup */}
+          <div className="absolute inset-0 pointer-events-none opacity-20 bg-speedlines" />
+          <div className="absolute inset-0 pointer-events-none halftone-bg" />
+          
+          <div className="relative w-full max-w-md bg-surface-container-high border-4 border-primary-container p-6 skew-x-[-3deg] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] flex flex-col gap-5 z-10 my-auto">
+            {/* Unskew inner content so text is readable */}
+            <div className="skew-x-[3deg] flex flex-col gap-4">
+              
+              {/* Header Badge */}
+              <div className="flex justify-between items-center border-b-2 border-outline-variant pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 bg-primary-container border-2 border-on-primary-container flex items-center justify-center -skew-x-12">
+                    <span className="material-symbols-outlined text-on-primary-container font-bold skew-x-12 text-lg">
+                      sports_kabaddi
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="font-display-lg text-lg text-primary-fixed tracking-wide uppercase italic">
+                      MOBILE PORTAL
+                    </span>
+                    <span className="font-label-caps text-[9px] text-outline-variant uppercase">
+                      Path of the Fist v1.0
+                    </span>
+                  </div>
+                </div>
+                
+                {/* Compact Close X Button */}
+                <button 
+                  onClick={() => {
+                    setShowMobileWelcome(false);
+                    sessionStorage.setItem('fist_mobile_welcome_dismissed', 'true');
+                  }}
+                  className="w-8 h-8 flex items-center justify-center border border-error-container text-error hover:bg-error hover:text-on-error transition-colors"
+                >
+                  <span className="material-symbols-outlined text-sm font-bold">close</span>
+                </button>
+              </div>
+
+              {/* Title & Description */}
+              <div className="flex flex-col gap-1">
+                <h2 className="font-display-lg text-2xl text-primary-container uppercase tracking-tight italic">
+                  WELCOME TO THE ARENA
+                </h2>
+                <p className="text-on-surface-variant font-body-md text-xs leading-relaxed">
+                  Your mobile terminal to Combo Breaker tournament data (2022 - 2026). Ask about match brackets, results, upsets, or player stats.
+                </p>
+              </div>
+
+              {/* Quick-Start Cards */}
+              <div className="flex flex-col gap-3 mt-1">
+                <span className="font-label-caps text-[10px] text-tertiary-container uppercase tracking-wider">
+                  Select a prompt to begin:
+                </span>
+                <div className="grid grid-cols-1 gap-2.5">
+                  <button
+                    onClick={() => {
+                      sendMessage("Who won the Street Fighter 6 bracket?");
+                      setShowMobileWelcome(false);
+                      sessionStorage.setItem('fist_mobile_welcome_dismissed', 'true');
+                    }}
+                    className="flex items-center justify-between p-3 bg-surface border-2 border-primary-container hover:bg-primary-container/20 text-left transition-all hover:translate-x-1"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🏆</span>
+                      <span className="font-label-caps text-xs text-on-surface">SF6 Bracket Winner</span>
+                    </div>
+                    <span className="material-symbols-outlined text-primary-container text-sm">arrow_forward</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      sendMessage("Were there any upsets?");
+                      setShowMobileWelcome(false);
+                      sessionStorage.setItem('fist_mobile_welcome_dismissed', 'true');
+                    }}
+                    className="flex items-center justify-between p-3 bg-surface border-2 border-secondary-container hover:bg-secondary-container/20 text-left transition-all hover:translate-x-1"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">⚡</span>
+                      <span className="font-label-caps text-xs text-on-surface">Tournament Upsets</span>
+                    </div>
+                    <span className="material-symbols-outlined text-secondary-container text-sm">arrow_forward</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      sendMessage("Who had the most wins?");
+                      setShowMobileWelcome(false);
+                      sessionStorage.setItem('fist_mobile_welcome_dismissed', 'true');
+                    }}
+                    className="flex items-center justify-between p-3 bg-surface border-2 border-tertiary-container hover:bg-tertiary-container/20 text-left transition-all hover:translate-x-1"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🥇</span>
+                      <span className="font-label-caps text-xs text-on-surface">Top Performers / Most Wins</span>
+                    </div>
+                    <span className="material-symbols-outlined text-tertiary-container text-sm">arrow_forward</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Specs & Tech badges */}
+              <div className="flex flex-wrap gap-1.5 mt-2 justify-center">
+                <span className="bg-surface-container-low text-[9px] font-label-caps text-outline-variant px-2 py-0.5 border border-outline-variant">
+                  Neo4j GraphRAG
+                </span>
+                <span className="bg-surface-container-low text-[9px] font-label-caps text-outline-variant px-2 py-0.5 border border-outline-variant">
+                  FastAPI Streams
+                </span>
+                <span className="bg-surface-container-low text-[9px] font-label-caps text-outline-variant px-2 py-0.5 border border-outline-variant">
+                  Touch Combat UI
+                </span>
+              </div>
+
+              {/* Action / Enter Button */}
+              <button
+                onClick={() => {
+                  setShowMobileWelcome(false);
+                  sessionStorage.setItem('fist_mobile_welcome_dismissed', 'true');
+                }}
+                className="w-full mt-2 py-3 bg-primary-container text-on-primary-container font-headline-lg-mobile text-base uppercase font-bold hover:bg-tertiary-container hover:text-on-tertiary-container transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] border-2 border-black flex items-center justify-center gap-2 active:scale-95"
+              >
+                ENTER ARENA
+                <span className="material-symbols-outlined font-bold text-sm">sports_kabaddi</span>
+              </button>
+
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

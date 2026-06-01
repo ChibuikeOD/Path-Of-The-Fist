@@ -632,6 +632,9 @@ def get_all_events():
     result = session.run(
         "MATCH (e:Event) RETURN {id: e.id, name: e.name} AS event"
     )
+
+
+
     events = [record["event"] for record in result]
     session.close()
     return events
@@ -646,7 +649,7 @@ def create_player(player: PlayerCreate):
         result = session.run(
             """
             CREATE (p:Player {id: $id, gamertag: $gamertag, rating: $rating})
-            RETURN {id: p.id, gamertag: p.gamertag, rating: p.rating} AS player
+            RETURN {id: p.id, gamertag: p.gamertag, rating: p.rating, wins: coalesce(p.wins, 0), losses: coalesce(p.losses, 0)} AS player
             """,
             id=player.id,
             gamertag=player.gamertag,
@@ -678,7 +681,7 @@ def get_player(player_id: int):
     """Get a single player by ID"""
     session = get_session()
     result = session.run(
-        "MATCH (p:Player {id: $id}) RETURN {id: p.id, gamertag: p.gamertag, rating: p.rating} AS player",
+        "MATCH (p:Player {id: $id}) RETURN {id: p.id, gamertag: p.gamertag, rating: p.rating, wins: coalesce(p.wins, 0), losses: coalesce(p.losses, 0)} AS player",
         id=player_id
     )
     record = result.single()
@@ -692,7 +695,7 @@ def get_players_by_event(event_id: int):
     result = session.run(
         """
         MATCH (p:Player)-[:PARTICIPATED_IN]->(e:Event {id: $event_id})
-        RETURN {id: p.id, gamertag: p.gamertag, rating: p.rating} AS player
+        RETURN {id: p.id, gamertag: p.gamertag, rating: p.rating, wins: coalesce(p.wins, 0), losses: coalesce(p.losses, 0)} AS player
         """,
         event_id=event_id
     )
@@ -708,7 +711,7 @@ def get_all_players():
         """
         MATCH (p:Player)
         WHERE p.id IS NOT NULL AND p.gamertag IS NOT NULL
-        RETURN {id: p.id, gamertag: p.gamertag, rating: p.rating} AS player
+        RETURN {id: p.id, gamertag: p.gamertag, rating: p.rating, wins: coalesce(p.wins, 0), losses: coalesce(p.losses, 0)} AS player
         """
     )
     players = [record["player"] for record in result]
@@ -830,7 +833,7 @@ def update_player_rating(player_id: int, new_rating: int):
             """
             MATCH (p:Player {id: $id})
             SET p.rating = $rating
-            RETURN {id: p.id, gamertag: p.gamertag, rating: p.rating} AS player
+            RETURN {id: p.id, gamertag: p.gamertag, rating: p.rating, wins: coalesce(p.wins, 0), losses: coalesce(p.losses, 0)} AS player
             """,
             id=player_id,
             rating=new_rating
@@ -910,6 +913,8 @@ def create_set(set_data: SetCreate):
         record = result.single()
         session.close()
         logger.info(f"Created set: {set_data.id}")
+        if record and record["set_result"]:
+            update_players_win_tallies([set_data.player1_id, set_data.player2_id])
         return record["set_result"] if record else None
     except Exception as e:
         logger.warning(f"Set {set_data.id} may already exist: {e}")
@@ -1010,6 +1015,8 @@ def update_set_winner(set_id: int, winner_id: int):
         record = result.single()
         session.close()
         logger.info(f"Updated set {set_id} winner to {winner_id}")
+        if record and record["set_result"]:
+            update_players_win_tallies([record["set_result"]["player1_id"], record["set_result"]["player2_id"]])
         return record["set_result"] if record else None
     except Exception as e:
         logger.error(f"Error updating set winner: {e}")
@@ -1058,6 +1065,36 @@ def get_player_wins(player_id: int):
     sets = [record["set_result"] for record in result]
     session.close()
     return sets
+
+
+def update_players_win_tallies(player_ids: list[int]):
+    """Update the win and loss tallies as properties for the given player IDs."""
+    if not player_ids:
+        return
+    def _write():
+        session = get_session()
+        try:
+            session.run(
+                """
+                MATCH (p:Player)
+                WHERE p.id IN $player_ids
+                SET p.wins = 0, p.losses = 0
+                WITH p
+                OPTIONAL MATCH (s:Set)-[:PLAYER1|PLAYER2]->(p)
+                WHERE s.winner_id IS NOT NULL
+                WITH p, 
+                     sum(CASE WHEN s.winner_id = p.id THEN 1 ELSE 0 END) AS wins,
+                     sum(CASE WHEN s.winner_id <> p.id THEN 1 ELSE 0 END) AS losses
+                SET p.wins = wins, p.losses = losses
+                """,
+                player_ids=player_ids
+            )
+        finally:
+            session.close()
+    try:
+        _run_with_driver_retry(f"update player win tallies for {player_ids}", _write)
+    except Exception as e:
+        logger.error(f"Error updating win/loss tallies for players {player_ids}: {e}")
 
 
 if __name__ == "__main__":
