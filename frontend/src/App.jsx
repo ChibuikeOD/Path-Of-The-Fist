@@ -8,8 +8,8 @@ const SUGGESTIONS = [
 ]
 
 const AD_UNITS = {
-  left: ['2440194', '2440198'],
-  right: ['2440193', '2440198'],
+  left: ['2440194'],
+  right: [],
 }
 
 function formatTime(date) {
@@ -602,6 +602,7 @@ export default function App() {
 }
 
 function AdRail({ id, side }) {
+  if (!id || id.length === 0) return null;
   return (
     <aside
       className={`hidden lg:block order-1 lg:order-none shrink-0 w-full lg:w-44 xl:w-56 p-3 md:p-4 lg:py-8 ${
