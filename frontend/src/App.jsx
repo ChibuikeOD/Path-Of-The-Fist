@@ -26,7 +26,6 @@ export default function App() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [crackles, setCrackles] = useState([])
-  const [isMobile, setIsMobile] = useState(false)
   const [showMobileWelcome, setShowMobileWelcome] = useState(false)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -35,7 +34,6 @@ export default function App() {
   useEffect(() => {
     const checkMobile = () => {
       const mobile = window.innerWidth < 768
-      setIsMobile(mobile)
       if (mobile && !sessionStorage.getItem('fist_mobile_welcome_dismissed')) {
         setShowMobileWelcome(true)
       }
@@ -305,11 +303,11 @@ export default function App() {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden relative z-10">
+      <main className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(11rem,14rem)_minmax(0,64rem)_minmax(11rem,14rem)] lg:justify-center overflow-hidden relative z-10">
         <AdRail id={AD_UNITS.left} side="left" />
 
         {/* Center: Hype Chat Panel */}
-        <section className="flex-1 min-h-0 flex flex-col p-3 sm:p-4 md:p-8 h-full overflow-hidden w-full max-w-5xl mx-auto">
+        <section className="min-h-0 flex flex-col p-3 sm:p-4 md:p-8 h-full overflow-hidden w-full max-w-5xl mx-auto lg:col-start-2">
 
 
           {/* Chat Messages Area */}
@@ -606,7 +604,7 @@ function AdRail({ id, side }) {
     <aside
       className={`hidden lg:block order-1 lg:order-none shrink-0 w-full lg:w-44 xl:w-56 p-3 md:p-4 lg:py-8 ${
         side === 'left' ? 'lg:pl-6 lg:pr-2' : 'lg:pl-2 lg:pr-6'
-      }`}
+      } ${side === 'left' ? 'lg:col-start-1' : 'lg:col-start-3'}`}
       aria-label={`${side} advertisement`}
     >
       <div className="flex flex-col gap-4">
