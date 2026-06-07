@@ -197,6 +197,7 @@ export default function App() {
     setLoading(true)
 
     try {
+      let lastFullText = ''
       const res = await fetch('/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -233,6 +234,7 @@ export default function App() {
 
             if (event.type === 'delta') {
               const token = event.text ?? ''
+              lastFullText += token
               updateMessage(assistantId, (msg) => {
                 const fullText = msg.pending ? token : `${msg.fullText ?? ''}${token}`
                 const { thinking, answer } = parseThinkingAndAnswer(fullText)
@@ -278,6 +280,7 @@ export default function App() {
         parseStreamLine(buffer, (event) => {
           if (event.type === 'delta') {
             const token = event.text ?? ''
+            lastFullText += token
             updateMessage(assistantId, (msg) => {
               const fullText = msg.pending ? token : `${msg.fullText ?? ''}${token}`
               const { thinking, answer } = parseThinkingAndAnswer(fullText)
@@ -294,20 +297,20 @@ export default function App() {
         })
       }
 
-      let finalAnswerText = ''
+      const { thinking, answer } = parseThinkingAndAnswer(lastFullText)
+      const finalAnswerText = answer || 'No answer came back. Try again in a moment.'
+      const elapsedLatency = ((performance.now() - startedAt) / 1000).toFixed(2)
+
       updateMessage(assistantId, (msg) => {
-        const finalRaw = msg.pending ? 'No answer came back. Try again in a moment.' : (msg.fullText ?? msg.text)
-        const { thinking, answer } = parseThinkingAndAnswer(finalRaw)
-        finalAnswerText = answer
         return {
           ...msg,
           streaming: false,
-          fullText: finalRaw,
+          fullText: lastFullText,
           thinking,
-          text: answer,
+          text: finalAnswerText,
           isThinking: false,
           pending: false,
-          latency: msg.latency ?? ((performance.now() - startedAt) / 1000).toFixed(2),
+          latency: msg.latency ?? elapsedLatency,
         }
       })
 
