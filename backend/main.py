@@ -317,6 +317,49 @@ async def chat_stream(req: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class TTSRequest(BaseModel):
+    text: str
+
+
+@app.post("/tts", tags=["TTS"])
+async def text_to_speech(req: TTSRequest):
+    """Generate speech from text using ElevenLabs API and return the audio stream."""
+    import requests
+    elevenlabs_api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    voice_id = os.environ.get("ELEVENLABS_VOICE_ID", "Anr9GtYh2VRXxiPplzxM").strip()
+    
+    if not elevenlabs_api_key:
+        raise HTTPException(status_code=500, detail="ElevenLabs API key is not configured in backend environment.")
+        
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    headers = {
+        "xi-api-key": elevenlabs_api_key,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "text": req.text,
+        "model_id": "eleven_monolingual_v1",
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=payload, stream=True)
+        if response.status_code != 200:
+            logger.error(f"ElevenLabs API error: {response.status_code} - {response.text}")
+            raise HTTPException(status_code=response.status_code, detail=f"ElevenLabs error: {response.text}")
+            
+        def iter_audio():
+            for chunk in response.iter_content(chunk_size=4096):
+                if chunk:
+                    yield chunk
+                    
+        return StreamingResponse(iter_audio(), media_type="audio/mpeg")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"TTS generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== ROOT ====================
 
 @app.get("/", tags=["Root"])

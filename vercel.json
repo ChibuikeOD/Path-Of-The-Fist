@@ -20,6 +20,10 @@
       "dest": "https://path-of-the-fist.onrender.com/chat"
     },
     {
+      "src": "/tts",
+      "dest": "https://path-of-the-fist.onrender.com/tts"
+    },
+    {
       "src": "/events/(.*)",
       "dest": "https://path-of-the-fist.onrender.com/events/$1"
     },

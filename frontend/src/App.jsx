@@ -30,6 +30,26 @@ export default function App() {
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
 
+  const [commentaryEnabled, setCommentaryEnabled] = useState(() => {
+    return localStorage.getItem('fist_commentary_enabled') !== 'false'
+  })
+  const [playingMessageId, setPlayingMessageId] = useState(null)
+  const [loadingSpeechMessageId, setLoadingSpeechMessageId] = useState(null)
+  const currentAudioRef = useRef(null)
+  const commentaryEnabledRef = useRef(commentaryEnabled)
+
+  useEffect(() => {
+    commentaryEnabledRef.current = commentaryEnabled
+  }, [commentaryEnabled])
+
+  useEffect(() => {
+    return () => {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause()
+      }
+    }
+  }, [])
+
   // Detect mobile view and check if welcome popup should be shown
   useEffect(() => {
     const checkMobile = () => {
@@ -63,6 +83,80 @@ export default function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
+
+  function cleanTextForTTS(text) {
+    if (!text) return ''
+    return text
+      .replace(/[#*`~_]/g, '')
+      .replace(/[-+•]\s+/g, '')
+      .replace(/\[Thinking Process\].*?\[Answer\]/gs, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  async function playSpeech(text, messageId) {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause()
+      currentAudioRef.current = null
+    }
+    setPlayingMessageId(null)
+    setLoadingSpeechMessageId(messageId)
+
+    try {
+      const cleaned = cleanTextForTTS(text)
+      if (!cleaned) {
+        setLoadingSpeechMessageId(null)
+        return
+      }
+
+      const res = await fetch('/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: cleaned })
+      })
+
+      if (!res.ok) {
+        throw new Error(`TTS API error: ${res.status}`)
+      }
+
+      const blob = await res.blob()
+      const audioUrl = URL.createObjectURL(blob)
+      const audio = new Audio(audioUrl)
+
+      currentAudioRef.current = audio
+      setPlayingMessageId(messageId)
+      setLoadingSpeechMessageId(null)
+
+      audio.onended = () => {
+        setPlayingMessageId(null)
+        currentAudioRef.current = null
+      }
+
+      audio.onerror = (e) => {
+        console.error("Audio playback error:", e)
+        setPlayingMessageId(null)
+        currentAudioRef.current = null
+      }
+
+      await audio.play()
+    } catch (err) {
+      console.error("Speech synthesis failed:", err)
+      setLoadingSpeechMessageId(null)
+      setPlayingMessageId(null)
+    }
+  }
+
+  function togglePlaySpeech(msg) {
+    if (playingMessageId === msg.id) {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause()
+        currentAudioRef.current = null
+      }
+      setPlayingMessageId(null)
+    } else {
+      playSpeech(msg.text, msg.id)
+    }
+  }
 
   function updateMessage(messageId, updater) {
     setMessages(prev => prev.map(msg => (msg.id === messageId ? updater(msg) : msg)))
@@ -200,9 +294,11 @@ export default function App() {
         })
       }
 
+      let finalAnswerText = ''
       updateMessage(assistantId, (msg) => {
         const finalRaw = msg.pending ? 'No answer came back. Try again in a moment.' : (msg.fullText ?? msg.text)
         const { thinking, answer } = parseThinkingAndAnswer(finalRaw)
+        finalAnswerText = answer
         return {
           ...msg,
           streaming: false,
@@ -214,6 +310,10 @@ export default function App() {
           latency: msg.latency ?? ((performance.now() - startedAt) / 1000).toFixed(2),
         }
       })
+
+      if (commentaryEnabledRef.current && finalAnswerText && finalAnswerText !== 'Reading bracket data...' && finalAnswerText !== 'No answer came back. Try again in a moment.' && !finalAnswerText.startsWith('Error:')) {
+        playSpeech(finalAnswerText, assistantId)
+      }
     } catch (err) {
       const elapsed = ((performance.now() - startedAt) / 1000).toFixed(2)
       updateMessage(assistantId, (msg) => ({
@@ -411,6 +511,32 @@ export default function App() {
                     />
                   )}
 
+                  {msg.role !== 'user' && !msg.pending && !msg.error && (
+                    <button
+                      onClick={() => togglePlaySpeech(msg)}
+                      className={`absolute top-4 right-4 p-1.5 border-2 border-on-tertiary-container hover:scale-105 active:scale-95 transition-all flex items-center justify-center -skew-x-12 ${
+                        playingMessageId === msg.id
+                          ? 'bg-primary-container text-on-primary-container animate-pulse'
+                          : 'bg-background text-primary-container hover:bg-primary-container hover:text-on-primary-container'
+                      }`}
+                      title={playingMessageId === msg.id ? "Stop Commentary" : "Play Commentary"}
+                    >
+                      {loadingSpeechMessageId === msg.id ? (
+                        <span className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full skew-x-12 animate-pulse" />
+                      ) : playingMessageId === msg.id ? (
+                        <div className="flex items-end gap-0.5 px-0.5 skew-x-12 h-4">
+                          <span className="sound-bar bg-current w-0.5 animate-soundbar1" />
+                          <span className="sound-bar bg-current w-0.5 animate-soundbar2" />
+                          <span className="sound-bar bg-current w-0.5 animate-soundbar3" />
+                        </div>
+                      ) : (
+                        <span className="material-symbols-outlined text-base font-bold skew-x-12">
+                          volume_up
+                        </span>
+                      )}
+                    </button>
+                  )}
+
                   <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
 
                   {msg.time && (
@@ -445,6 +571,28 @@ export default function App() {
                 disabled={loading}
                 autoFocus
               />
+              <button
+                type="button"
+                className={`px-3 py-2 flex items-center justify-center skew-x-[6deg] border-l-2 border-background transition-colors ${
+                  commentaryEnabled
+                    ? 'bg-tertiary-container text-on-tertiary-container hover:bg-tertiary-container/80'
+                    : 'bg-surface-variant text-on-surface-variant hover:bg-surface-variant/80'
+                }`}
+                onClick={() => setCommentaryEnabled(prev => {
+                  const newVal = !prev
+                  localStorage.setItem('fist_commentary_enabled', String(newVal))
+                  if (!newVal && currentAudioRef.current) {
+                    currentAudioRef.current.pause()
+                    setPlayingMessageId(null)
+                  }
+                  return newVal
+                })}
+                title={commentaryEnabled ? "Mute Commentary" : "Enable Commentary"}
+              >
+                <span className="material-symbols-outlined text-lg">
+                  {commentaryEnabled ? 'volume_up' : 'volume_off'}
+                </span>
+              </button>
               <button
                 className="bg-primary-container text-on-primary-container px-4 sm:px-6 py-2 font-headline-lg-mobile text-headline-lg-mobile uppercase hover:bg-tertiary-container hover:text-on-tertiary-container transition-colors flex items-center justify-center skew-x-[6deg] -ml-2 border-l-2 border-background disabled:opacity-40 disabled:cursor-not-allowed font-bold"
                 onClick={() => sendMessage()}
