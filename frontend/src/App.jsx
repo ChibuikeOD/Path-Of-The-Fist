@@ -1,16 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 
 const SUGGESTIONS = [
-  "Who won the Street Fighter 6 bracket?",
-  "Were there any upsets?",
-  "Who had the most wins?",
-  "Who performed best in each game",
+  "What is Combo Breaker?",
+  "Who are the legendary players here?",
+  "Tell me about some hype matches or comebacks",
+  "Are there any amazing underdog runs?",
+  "Which game is the most popular?",
 ]
-
-const AD_UNITS = {
-  left: ['2440194'],
-  right: [],
-}
 
 function formatTime(date) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -411,11 +407,10 @@ export default function App() {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(11rem,14rem)_minmax(0,64rem)_minmax(11rem,14rem)] lg:justify-center overflow-hidden relative z-10">
-        <AdRail id={AD_UNITS.left} side="left" />
+      <main className="flex-1 min-h-0 flex flex-col overflow-hidden relative z-10">
 
         {/* Center: Hype Chat Panel */}
-        <section className="min-h-0 flex flex-col p-3 sm:p-4 md:p-8 h-full overflow-hidden w-full max-w-5xl mx-auto lg:col-start-2">
+        <section className="min-h-0 flex flex-col p-3 sm:p-4 md:p-8 h-full overflow-hidden w-full max-w-3xl mx-auto">
 
 
           {/* Chat Messages Area */}
@@ -615,7 +610,6 @@ export default function App() {
           </div>
         </section>
 
-        <AdRail id={AD_UNITS.right} side="right" />
       </main>
 
       {/* Mobile Welcome Popup (Overlay) */}
@@ -677,45 +671,45 @@ export default function App() {
                 <div className="grid grid-cols-1 gap-2.5">
                   <button
                     onClick={() => {
-                      sendMessage("Who won the Street Fighter 6 bracket?");
+                      sendMessage("What is Combo Breaker?");
                       setShowMobileWelcome(false);
                       sessionStorage.setItem('fist_mobile_welcome_dismissed', 'true');
                     }}
                     className="flex items-center justify-between p-3 bg-surface border-2 border-primary-container hover:bg-primary-container/20 text-left transition-all hover:translate-x-1"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-lg">🏆</span>
-                      <span className="font-label-caps text-xs text-on-surface">SF6 Bracket Winner</span>
+                      <span className="text-lg">🎮</span>
+                      <span className="font-label-caps text-xs text-on-surface">What is Combo Breaker?</span>
                     </div>
                     <span className="material-symbols-outlined text-primary-container text-sm">arrow_forward</span>
                   </button>
 
                   <button
                     onClick={() => {
-                      sendMessage("Were there any upsets?");
+                      sendMessage("Who are the legendary players here?");
                       setShowMobileWelcome(false);
                       sessionStorage.setItem('fist_mobile_welcome_dismissed', 'true');
                     }}
                     className="flex items-center justify-between p-3 bg-surface border-2 border-secondary-container hover:bg-secondary-container/20 text-left transition-all hover:translate-x-1"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-lg">⚡</span>
-                      <span className="font-label-caps text-xs text-on-surface">Tournament Upsets</span>
+                      <span className="text-lg">👑</span>
+                      <span className="font-label-caps text-xs text-on-surface">Legendary Players</span>
                     </div>
                     <span className="material-symbols-outlined text-secondary-container text-sm">arrow_forward</span>
                   </button>
 
                   <button
                     onClick={() => {
-                      sendMessage("Who had the most wins?");
+                      sendMessage("Tell me about some hype matches or comebacks");
                       setShowMobileWelcome(false);
                       sessionStorage.setItem('fist_mobile_welcome_dismissed', 'true');
                     }}
                     className="flex items-center justify-between p-3 bg-surface border-2 border-tertiary-container hover:bg-tertiary-container/20 text-left transition-all hover:translate-x-1"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-lg">🥇</span>
-                      <span className="font-label-caps text-xs text-on-surface">Top Performers / Most Wins</span>
+                      <span className="text-lg">🔥</span>
+                      <span className="font-label-caps text-xs text-on-surface">Hype Matches & Comebacks</span>
                     </div>
                     <span className="material-symbols-outlined text-tertiary-container text-sm">arrow_forward</span>
                   </button>
@@ -755,35 +749,7 @@ export default function App() {
   )
 }
 
-function AdRail({ id, side }) {
-  if (!id || id.length === 0) return null;
-  return (
-    <aside
-      className={`hidden lg:block order-1 lg:order-none shrink-0 w-full lg:w-44 xl:w-56 p-3 md:p-4 lg:py-8 ${
-        side === 'left' ? 'lg:pl-6 lg:pr-2' : 'lg:pl-2 lg:pr-6'
-      } ${side === 'left' ? 'lg:col-start-1' : 'lg:col-start-3'}`}
-      aria-label={`${side} advertisement`}
-    >
-      <div className="flex flex-col gap-4">
-        {id.map((adId, index) => (
-          <div
-            key={`${side}-${adId}-${index}`}
-            id={`aads-frame-${side}-${adId}-${index}`}
-            className="w-full mx-auto relative z-20 border-2 border-outline-variant bg-surface-container-low p-2 skew-x-[-6deg]"
-          >
-            <iframe
-              title={`AADS advertisement ${adId} ${side} ${index + 1}`}
-              data-aa={adId}
-              src={`https://acceptable.a-ads.com/${adId}/?size=Adaptive`}
-              className="block mx-auto w-full min-h-[90px] skew-x-[6deg]"
-              style={{ border: 0, padding: 0, overflow: 'hidden' }}
-            />
-          </div>
-        ))}
-      </div>
-    </aside>
-  )
-}
+
 
 function parseThinkingAndAnswer(fullText) {
   let thinking = '';
