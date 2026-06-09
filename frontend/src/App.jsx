@@ -31,7 +31,12 @@ export default function App() {
   const inputRef = useRef(null)
 
   const [commentaryEnabled, setCommentaryEnabled] = useState(() => {
-    return localStorage.getItem('fist_commentary_enabled') !== 'false'
+    const saved = localStorage.getItem('fist_commentary_enabled')
+    if (saved === null) {
+      localStorage.setItem('fist_commentary_enabled', 'true')
+      return true
+    }
+    return saved !== 'false'
   })
   const [playingMessageId, setPlayingMessageId] = useState(null)
   const [loadingSpeechMessageId, setLoadingSpeechMessageId] = useState(null)
@@ -517,7 +522,7 @@ export default function App() {
                   {msg.role !== 'user' && !msg.pending && !msg.error && (
                     <button
                       onClick={() => togglePlaySpeech(msg)}
-                      className={`absolute top-4 right-4 p-1.5 border-2 border-on-tertiary-container hover:scale-105 active:scale-95 transition-all flex items-center justify-center -skew-x-12 ${
+                      className={`absolute bottom-4 right-4 p-1.5 border-2 border-on-tertiary-container hover:scale-105 active:scale-95 transition-all flex items-center justify-center -skew-x-12 ${
                         playingMessageId === msg.id
                           ? 'bg-primary-container text-on-primary-container animate-pulse'
                           : 'bg-background text-primary-container hover:bg-primary-container hover:text-on-primary-container'
