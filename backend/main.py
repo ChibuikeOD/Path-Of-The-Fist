@@ -327,9 +327,7 @@ class TTSRequest(BaseModel):
     text: str
 
 
-@app.post("/tts", tags=["TTS"])
-async def text_to_speech(req: TTSRequest):
-    """Generate speech from text using ElevenLabs API and return the audio stream."""
+def generate_tts_stream(text: str):
     import requests
     elevenlabs_api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
     voice_id = os.environ.get("ELEVENLABS_VOICE_ID", "Anr9GtYh2VRXxiPplzxM").strip()
@@ -343,7 +341,7 @@ async def text_to_speech(req: TTSRequest):
         "Content-Type": "application/json"
     }
     payload = {
-        "text": req.text,
+        "text": text,
         "model_id": "eleven_monolingual_v1",
     }
     
@@ -364,6 +362,18 @@ async def text_to_speech(req: TTSRequest):
     except Exception as e:
         logger.error(f"TTS generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tts", tags=["TTS"])
+def text_to_speech(req: TTSRequest):
+    """Generate speech from text using ElevenLabs API and return the audio stream via POST (non-blocking)."""
+    return generate_tts_stream(req.text)
+
+
+@app.get("/tts", tags=["TTS"])
+def text_to_speech_get(text: str):
+    """Generate speech from text using ElevenLabs API and return the audio stream via GET (non-blocking)."""
+    return generate_tts_stream(text)
 
 
 # ==================== ROOT ====================

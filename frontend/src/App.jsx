@@ -17,6 +17,150 @@ function getComicWord(index) {
   return words[index % words.length]
 }
 
+class SpeechQueue {
+  constructor(onStart, onEnd, onError, onFirstPlay) {
+    this.queue = []
+    this.isPlaying = false
+    this.currentAudio = null
+    this.nextAudio = null
+    this.onStart = onStart
+    this.onEnd = onEnd
+    this.onError = onError
+    this.onFirstPlay = onFirstPlay
+    this.hasPlayedFirst = false
+  }
+
+  add(text) {
+    if (!text || !text.trim()) return
+    this.queue.push(text.trim())
+    if (!this.isPlaying) {
+      this.playNext()
+    } else if (this.queue.length === 1 && !this.nextAudio) {
+      this.preloadNext()
+    }
+  }
+
+  preloadNext() {
+    if (this.queue.length === 0) return
+    const nextText = this.queue[0]
+    const url = `/tts?text=${encodeURIComponent(nextText)}`
+    this.nextAudio = new Audio(url)
+    this.nextAudio.load()
+  }
+
+  playNext() {
+    if (this.queue.length === 0 && !this.nextAudio) {
+      this.isPlaying = false
+      this.hasPlayedFirst = false
+      if (this.onEnd) this.onEnd()
+      return
+    }
+
+    this.isPlaying = true
+    if (this.onStart) this.onStart()
+
+    let audio
+    if (this.nextAudio) {
+      audio = this.nextAudio
+      this.queue.shift()
+      this.nextAudio = null
+    } else {
+      const nextText = this.queue.shift()
+      const url = `/tts?text=${encodeURIComponent(nextText)}`
+      audio = new Audio(url)
+    }
+
+    this.currentAudio = audio
+
+    this.preloadNext()
+
+    audio.onended = () => {
+      this.playNext()
+    }
+
+    audio.onerror = (e) => {
+      console.error("Audio queue playback error:", e)
+      if (this.onError) this.onError(e)
+      this.playNext()
+    }
+
+    audio.play()
+      .then(() => {
+        if (!this.hasPlayedFirst) {
+          this.hasPlayedFirst = true
+          if (this.onFirstPlay) this.onFirstPlay()
+        }
+      })
+      .catch(err => {
+        console.error("Audio play failed:", err)
+        if (this.onError) this.onError(err)
+        this.playNext()
+      })
+  }
+
+  stop() {
+    this.queue = []
+    if (this.currentAudio) {
+      this.currentAudio.pause()
+      this.currentAudio = null
+    }
+    if (this.nextAudio) {
+      this.nextAudio = null
+    }
+    this.isPlaying = false
+    this.hasPlayedFirst = false
+    if (this.onEnd) this.onEnd()
+  }
+}
+
+function splitIntoSentences(text) {
+  if (!text) return []
+  
+  const cleaned = text
+    .replace(/[#*`~_]/g, '')
+    .replace(/[-+•]\s+/g, '')
+    .replace(/\[Thinking Process\].*?\[Answer\]/gs, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!cleaned) return []
+
+  const abbreviations = ['vs', 'dr', 'mr', 'ms', 'no', 'approx', 'est', 'co', 'inc', 'ltd']
+  const sentences = []
+  let currentSentence = ''
+  
+  const tokens = cleaned.split(/(\s+)/)
+  
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]
+    currentSentence += token
+
+    if (/[.!?]/.test(token)) {
+      const cleanWord = token.replace(/[.!?]/g, '').toLowerCase().trim()
+      const isAbbrev = abbreviations.includes(cleanWord)
+
+      let isNextLowercase = false
+      if (i + 2 < tokens.length) {
+        const nextWord = tokens[i + 2].trim()
+        if (nextWord && nextWord[0] === nextWord[0].toLowerCase() && /[a-z]/.test(nextWord[0])) {
+          isNextLowercase = true
+        }
+      }
+
+      if (!isAbbrev && !isNextLowercase) {
+        sentences.push(currentSentence.trim())
+        currentSentence = ''
+      }
+    }
+  }
+
+  if (currentSentence.trim()) {
+    sentences.push(currentSentence.trim())
+  }
+
+  return sentences.filter(s => s.length > 0)
+}
+
 export default function App() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
@@ -36,17 +180,34 @@ export default function App() {
   })
   const [playingMessageId, setPlayingMessageId] = useState(null)
   const [loadingSpeechMessageId, setLoadingSpeechMessageId] = useState(null)
-  const currentAudioRef = useRef(null)
+  
   const commentaryEnabledRef = useRef(commentaryEnabled)
+  const speechQueueRef = useRef(null)
+  const streamAccumulatorRef = useRef('')
+  const processedIndexRef = useRef(0)
 
   useEffect(() => {
     commentaryEnabledRef.current = commentaryEnabled
   }, [commentaryEnabled])
 
   useEffect(() => {
+    speechQueueRef.current = new SpeechQueue(
+      null, // onStart
+      () => {
+        setPlayingMessageId(null)
+        setLoadingSpeechMessageId(null)
+      }, // onEnd
+      (err) => {
+        console.error("Speech Queue error:", err)
+      }, // onError
+      () => {
+        setLoadingSpeechMessageId(null)
+      } // onFirstPlay
+    )
+
     return () => {
-      if (currentAudioRef.current) {
-        currentAudioRef.current.pause()
+      if (speechQueueRef.current) {
+        speechQueueRef.current.stop()
       }
     }
   }, [])
@@ -95,67 +256,81 @@ export default function App() {
       .trim()
   }
 
-  async function playSpeech(text, messageId) {
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause()
-      currentAudioRef.current = null
+  function playSpeechQueue(text, messageId) {
+    if (speechQueueRef.current) {
+      speechQueueRef.current.stop()
     }
-    setPlayingMessageId(null)
+    
+    setPlayingMessageId(messageId)
     setLoadingSpeechMessageId(messageId)
 
-    try {
-      const cleaned = cleanTextForTTS(text)
-      if (!cleaned) {
-        setLoadingSpeechMessageId(null)
-        return
-      }
-
-      const res = await fetch('/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: cleaned })
-      })
-
-      if (!res.ok) {
-        throw new Error(`TTS API error: ${res.status}`)
-      }
-
-      const blob = await res.blob()
-      const audioUrl = URL.createObjectURL(blob)
-      const audio = new Audio(audioUrl)
-
-      currentAudioRef.current = audio
-      setPlayingMessageId(messageId)
-      setLoadingSpeechMessageId(null)
-
-      audio.onended = () => {
-        setPlayingMessageId(null)
-        currentAudioRef.current = null
-      }
-
-      audio.onerror = (e) => {
-        console.error("Audio playback error:", e)
-        setPlayingMessageId(null)
-        currentAudioRef.current = null
-      }
-
-      await audio.play()
-    } catch (err) {
-      console.error("Speech synthesis failed:", err)
-      setLoadingSpeechMessageId(null)
+    const sentences = splitIntoSentences(text)
+    if (sentences.length === 0) {
       setPlayingMessageId(null)
+      setLoadingSpeechMessageId(null)
+      return
     }
+
+    sentences.forEach(sentence => {
+      speechQueueRef.current.add(sentence)
+    })
   }
 
   function togglePlaySpeech(msg) {
     if (playingMessageId === msg.id) {
-      if (currentAudioRef.current) {
-        currentAudioRef.current.pause()
-        currentAudioRef.current = null
+      if (speechQueueRef.current) {
+        speechQueueRef.current.stop()
       }
       setPlayingMessageId(null)
     } else {
-      playSpeech(msg.text, msg.id)
+      playSpeechQueue(msg.text, msg.id)
+    }
+  }
+
+  const processStreamingText = (fullAnswerText) => {
+    const cleanedText = cleanTextForTTS(fullAnswerText)
+    if (cleanedText.length <= processedIndexRef.current) return
+
+    const newText = cleanedText.slice(processedIndexRef.current)
+    streamAccumulatorRef.current += newText
+    processedIndexRef.current = cleanedText.length
+
+    const abbreviations = ['vs', 'dr', 'mr', 'ms', 'no', 'approx', 'est', 'co', 'inc', 'ltd']
+    const textToParse = streamAccumulatorRef.current
+    const words = textToParse.split(/(\s+)/)
+    
+    let tempSentence = ''
+    let processedUpToWordIndex = -1
+
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i]
+      tempSentence += word
+
+      if (/[.!?]/.test(word)) {
+        const cleanWord = word.replace(/[.!?]/g, '').toLowerCase().trim()
+        const isAbbrev = abbreviations.includes(cleanWord)
+
+        if (i + 2 < words.length) {
+          const nextWord = words[i + 2].trim()
+          let isNextLowercase = false
+          if (nextWord && nextWord[0] === nextWord[0].toLowerCase() && /[a-z]/.test(nextWord[0])) {
+            isNextLowercase = true
+          }
+
+          if (!isAbbrev && !isNextLowercase) {
+            const sentenceToPlay = tempSentence.trim()
+            if (sentenceToPlay && speechQueueRef.current) {
+              speechQueueRef.current.add(sentenceToPlay)
+            }
+            tempSentence = ''
+            processedUpToWordIndex = i + 1
+          }
+        }
+      }
+    }
+
+    if (processedUpToWordIndex !== -1) {
+      streamAccumulatorRef.current = words.slice(processedUpToWordIndex + 1).join('')
     }
   }
 
@@ -196,6 +371,13 @@ export default function App() {
     setMessages(prev => [...prev, userMsg, assistantMsg])
     setInput('')
     setLoading(true)
+
+    // Reset streaming state and stop queue
+    streamAccumulatorRef.current = ''
+    processedIndexRef.current = 0
+    if (speechQueueRef.current) {
+      speechQueueRef.current.stop()
+    }
 
     try {
       let lastFullText = ''
@@ -239,6 +421,13 @@ export default function App() {
               updateMessage(assistantId, (msg) => {
                 const fullText = msg.pending ? token : `${msg.fullText ?? ''}${token}`
                 const { thinking, answer } = parseThinkingAndAnswer(fullText)
+
+                if (commentaryEnabledRef.current && answer && answer !== 'Reading bracket data...') {
+                  setPlayingMessageId(prev => prev === null ? assistantId : prev)
+                  setLoadingSpeechMessageId(prev => (prev === null && !speechQueueRef.current?.hasPlayedFirst) ? assistantId : prev)
+                  processStreamingText(answer)
+                }
+
                 return {
                   ...msg,
                   fullText,
@@ -285,6 +474,13 @@ export default function App() {
             updateMessage(assistantId, (msg) => {
               const fullText = msg.pending ? token : `${msg.fullText ?? ''}${token}`
               const { thinking, answer } = parseThinkingAndAnswer(fullText)
+
+              if (commentaryEnabledRef.current && answer && answer !== 'Reading bracket data...') {
+                setPlayingMessageId(prev => prev === null ? assistantId : prev)
+                setLoadingSpeechMessageId(prev => (prev === null && !speechQueueRef.current?.hasPlayedFirst) ? assistantId : prev)
+                processStreamingText(answer)
+              }
+
               return {
                 ...msg,
                 fullText,
@@ -315,8 +511,11 @@ export default function App() {
         }
       })
 
-      if (commentaryEnabledRef.current && finalAnswerText && finalAnswerText !== 'Reading bracket data...' && finalAnswerText !== 'No answer came back. Try again in a moment.' && !finalAnswerText.startsWith('Error:')) {
-        playSpeech(finalAnswerText, assistantId)
+      if (commentaryEnabledRef.current && speechQueueRef.current) {
+        const remaining = streamAccumulatorRef.current.trim()
+        if (remaining) {
+          speechQueueRef.current.add(remaining)
+        }
       }
     } catch (err) {
       const elapsed = ((performance.now() - startedAt) / 1000).toFixed(2)
@@ -584,9 +783,10 @@ export default function App() {
                 onClick={() => setCommentaryEnabled(prev => {
                   const newVal = !prev
                   localStorage.setItem('fist_commentary_enabled', String(newVal))
-                  if (!newVal && currentAudioRef.current) {
-                    currentAudioRef.current.pause()
+                  if (!newVal && speechQueueRef.current) {
+                    speechQueueRef.current.stop()
                     setPlayingMessageId(null)
+                    setLoadingSpeechMessageId(null)
                   }
                   return newVal
                 })}
