@@ -1,5 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || (
+  window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? ''
+    : 'https://path-of-the-fist.onrender.com'
+);
+
 const SUGGESTIONS = [
   "What is Combo Breaker?",
   "Who are the legendary players here?",
@@ -43,7 +49,7 @@ class SpeechQueue {
   preloadNext() {
     if (this.queue.length === 0) return
     const nextText = this.queue[0]
-    const url = `/tts?text=${encodeURIComponent(nextText)}`
+    const url = `${API_BASE_URL}/tts?text=${encodeURIComponent(nextText)}`
     this.nextAudio = new Audio(url)
     this.nextAudio.load()
   }
@@ -66,7 +72,7 @@ class SpeechQueue {
       this.nextAudio = null
     } else {
       const nextText = this.queue.shift()
-      const url = `/tts?text=${encodeURIComponent(nextText)}`
+      const url = `${API_BASE_URL}/tts?text=${encodeURIComponent(nextText)}`
       audio = new Audio(url)
     }
 
@@ -381,7 +387,7 @@ export default function App() {
 
     try {
       let lastFullText = ''
-      const res = await fetch('/chat/stream', {
+      const res = await fetch(`${API_BASE_URL}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question }),

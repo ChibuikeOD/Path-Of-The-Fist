@@ -818,7 +818,7 @@ def _message_text_from_chat_output(out) -> str:
 
 
 def _call_deepseek_chat_completion(system_message: str, user_message: str, start_time: float, question: str, tournament_data: str) -> str:
-    """Call DeepSeek's OpenAI-compatible chat completions API with 30-second budget enforcement."""
+    """Call DeepSeek's OpenAI-compatible chat completions API."""
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -832,13 +832,7 @@ def _call_deepseek_chat_completion(system_message: str, user_message: str, start
     last_error = None
     for url in candidate_urls:
         for attempt in range(1, 6):
-            elapsed = time.time() - start_time
-            if elapsed >= 30.0:
-                print("DeepSeek chat completion: 30s budget exceeded before request.")
-                return "Error: Chat generation timed out after 30 seconds."
-
-            budget = 30.0 - elapsed
-            request_timeout = min(15.0, budget)
+            request_timeout = 30.0
 
             payload = {
                 "model": DEEPSEEK_MODEL,
@@ -885,7 +879,7 @@ def _call_deepseek_chat_completion(system_message: str, user_message: str, start
                             reasoning = str(message[attr]).strip()
                             break
                     if reasoning:
-                        text = f"[Thinking Process]\n{reasoning}\n\n[Inference stopped: 30-second time budget reached]"
+                        text = f"[Thinking Process]\n{reasoning}"
                     else:
                         print("  [ERROR] DeepSeek response did not include message content. Skipping retries.")
                         raise NonRetryableError("DeepSeek response did not include message content")
@@ -906,7 +900,7 @@ def _call_deepseek_chat_completion(system_message: str, user_message: str, start
 
 
 def _call_deepseek_chat_completion_stream(system_message: str, user_message: str, start_time: float, question: str, tournament_data: str):
-    """Yield DeepSeek chat tokens from the streaming API, enforcing a 30s budget."""
+    """Yield DeepSeek chat tokens from the streaming API."""
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -924,14 +918,7 @@ def _call_deepseek_chat_completion_stream(system_message: str, user_message: str
         if stream_succeeded:
             break
         for attempt in range(1, 6):
-            elapsed = time.time() - start_time
-            if elapsed >= 30.0:
-                print("DeepSeek streaming: 30s budget exceeded before request.")
-                yield "Error: Chat generation timed out after 30 seconds."
-                return
-
-            budget = 30.0 - elapsed
-            request_timeout = min(15.0, budget)
+            request_timeout = 30.0
 
             payload = {
                 "model": DEEPSEEK_MODEL,
@@ -959,15 +946,6 @@ def _call_deepseek_chat_completion_stream(system_message: str, user_message: str
                 has_started_reasoning = False
                 has_generated_any_content = False
                 for raw_line in response.iter_lines(decode_unicode=True):
-                    # Check 30s time budget inside the stream loop
-                    if time.time() - start_time > 30.0:
-                        print("30s budget exceeded during stream loop.")
-                        if not has_generated_any_content:
-                            yield "\n\n[Inference stopped: 30-second time budget reached before generating answer content]"
-                        else:
-                            yield "\n\n[Answer cut off due to 30s timeout]"
-                        return
-
                     if not raw_line:
                         continue
                     raw_line_stripped = raw_line.strip()
@@ -1044,7 +1022,7 @@ def generate_answer(question):
     if use_deepseek:
         user_message = (
             f"TOURNAMENT DATA:\n{tournament_data}\n\nUSER QUESTION:\n{question}\n\n"
-            "Answer concisely based only on the data above."
+            "Provide a hyper-concise hype summary (max 3 sentences) based only on the data above."
         )
         print("Calling DeepSeek Inference...")
         _agent_log(
@@ -1073,7 +1051,7 @@ def generate_answer(question):
 
 
 def generate_answer_stream(question):
-    """Stream the generated answer as newline-delimited JSON events, enforcing a 30s budget."""
+    """Stream the generated answer as newline-delimited JSON events, enforcing a time budget."""
     start_time = time.time()
     yield _json_line("status", text="Reading bracket data...")
     print("Fetching graph data...")
@@ -1081,7 +1059,7 @@ def generate_answer_stream(question):
 
     user_message = (
         f"TOURNAMENT DATA:\n{tournament_data}\n\nUSER QUESTION:\n{question}\n\n"
-        "Answer concisely based only on the data above."
+        "Provide a hyper-concise hype summary (max 3 sentences) based only on the data above."
     )
 
     provider = CHAT_PROVIDER
