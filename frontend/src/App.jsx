@@ -9,7 +9,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || (
 const SUGGESTIONS = [
   "What is Combo Breaker?",
   "Who are the legendary players here?",
-  "Tell me about some hype matches or comebacks",
+  "Tell me about some interesting matches or comebacks",
   "Are there any amazing underdog runs?",
   "Which game is the most popular?",
 ]
@@ -907,7 +907,7 @@ export default function App() {
 
                   <button
                     onClick={() => {
-                      sendMessage("Tell me about some hype matches or comebacks");
+                      sendMessage("Tell me about some interesting matches or comebacks");
                       setShowMobileWelcome(false);
                       sessionStorage.setItem('fist_mobile_welcome_dismissed', 'true');
                     }}
@@ -915,7 +915,7 @@ export default function App() {
                   >
                     <div className="flex items-center gap-2">
                       <span className="text-lg">🔥</span>
-                      <span className="font-label-caps text-xs text-on-surface">Hype Matches & Comebacks</span>
+                      <span className="font-label-caps text-xs text-on-surface">Interesting Matches & Comebacks</span>
                     </div>
                     <span className="material-symbols-outlined text-tertiary-container text-sm">arrow_forward</span>
                   </button>
